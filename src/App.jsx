@@ -1262,7 +1262,7 @@ Rispondi sempre in italiano, in modo conciso e diretto. Non dare consigli operat
       </div>
 
       {/* Input bar */}
-      <div style={{flexShrink:0,padding:'8px 16px',paddingBottom:'calc(82px + env(safe-area-inset-bottom, 0px))',background:"inherit",borderTop:`0.5px solid ${C.sep}`}}>
+      <div style={{flexShrink:0,padding:'5px 14px',paddingBottom:'calc(82px + env(safe-area-inset-bottom, 0px))',background:"inherit",borderTop:`0.5px solid ${C.sep}`}}>
         <div style={{display:'flex',alignItems:'flex-end',gap:8,background:C.glass,backdropFilter:'blur(20px)',WebkitBackdropFilter:'blur(20px)',border:`0.5px solid ${C.sep2}`,borderRadius:24,padding:'6px 6px 6px 14px',marginBottom:6}}>
           <textarea
             ref={inputRef}
@@ -1628,7 +1628,7 @@ function TabBar({C,tabIdx,onTabTap,scheme}) {
         WebkitBackdropFilter:'saturate(200%) blur(52px)',
         border:`0.5px solid ${C.sep2}`,
         borderRadius:36,
-        padding:'8px 16px',
+        padding:'5px 14px',
         display:'flex',
         alignItems:'center',
         gap:12,
@@ -1666,8 +1666,8 @@ function TabBar({C,tabIdx,onTabTap,scheme}) {
                     <RvIconAI size={40} color={scheme==='dark'?'#FFFFFF':'#000000'}/>
                   </div>
                 ):(
-                  <RvAppIcon gradient={grad} active={active} size={32}>
-                    <Icon color="#FFFFFF"/>
+                  <RvAppIcon gradient={grad} active={active} size={28}>
+                    <Icon color="#000000"/>
                   </RvAppIcon>
                 )}
               </div>
@@ -2067,7 +2067,7 @@ export default function App() {
         transform: inputFocused ? 'translateX(-50%) translateY(120%)' : 'translateX(-50%) translateY(0)',
         opacity: inputFocused ? 0 : 1,
         pointerEvents: inputFocused ? 'none' : 'auto',
-        bottom: 'calc(-13px + env(safe-area-inset-bottom, 0px))',
+        bottom: 'calc(-17px + env(safe-area-inset-bottom, 0px))',
         transition: 'transform 0.28s cubic-bezier(0.34, 1.18, 0.64, 1), opacity 0.22s ease-out',
       }}>
         <TabBar C={C} tabIdx={tabIdx} onTabTap={handleTabTap} scheme={scheme}/>
