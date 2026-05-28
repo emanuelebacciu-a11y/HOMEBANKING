@@ -1870,7 +1870,7 @@ function TabBar({C,tabIdx,onTabTap,scheme}) {
         WebkitBackdropFilter:'saturate(200%) blur(52px)',
         border:`0.5px solid ${C.sep2}`,
         borderRadius:36,
-        padding:'2px 6px',
+        padding:'5px 12px',
         display:'flex',
         alignItems:'center',
         justifyContent:'space-around',
@@ -2306,7 +2306,7 @@ export default function App() {
       )}
 
       {/* TAB BAR — pill flottante, si nasconde quando tastiera aperta */}
-      <div style={{position:'fixed',left:'50%',zIndex:50,width:'calc(100% - 40px)',
+      <div style={{position:'fixed',left:'50%',zIndex:50,width:'calc(100% - 80px)',
         transform: inputFocused ? 'translateX(-50%) translateY(120%)' : 'translateX(-50%) translateY(0)',
         opacity: inputFocused ? 0 : 1,
         pointerEvents: inputFocused ? 'none' : 'auto',
