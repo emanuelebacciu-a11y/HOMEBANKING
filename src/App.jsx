@@ -2067,7 +2067,7 @@ export default function App() {
         transform: inputFocused ? 'translateX(-50%) translateY(120%)' : 'translateX(-50%) translateY(0)',
         opacity: inputFocused ? 0 : 1,
         pointerEvents: inputFocused ? 'none' : 'auto',
-        bottom: 'calc(2px + env(safe-area-inset-bottom, 0px))',
+        bottom: 'calc(-13px + env(safe-area-inset-bottom, 0px))',
         transition: 'transform 0.28s cubic-bezier(0.34, 1.18, 0.64, 1), opacity 0.22s ease-out',
       }}>
         <TabBar C={C} tabIdx={tabIdx} onTabTap={handleTabTap} scheme={scheme}/>
