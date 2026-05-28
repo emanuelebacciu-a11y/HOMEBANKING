@@ -1863,18 +1863,17 @@ const TAB_ICONS={overview:RvIconOverview,spese:RvIconSpese,movimenti:RvIconMovim
 
 function TabBar({C,tabIdx,onTabTap,scheme}) {
   return (
-    <div style={{pointerEvents:'auto',width:'100%',boxSizing:'border-box'}}>
+    <div style={{pointerEvents:'auto'}}>
       <div style={{
         background:C.glassBar,
         backdropFilter:'saturate(200%) blur(52px)',
         WebkitBackdropFilter:'saturate(200%) blur(52px)',
         border:`0.5px solid ${C.sep2}`,
         borderRadius:36,
-        padding:'5px 12px',
+        padding:'8px 16px',
         display:'flex',
         alignItems:'center',
-        justifyContent:'space-around',
-        width:'100%',
+        gap:12,
         boxShadow:scheme==='dark'
           ?'0 14px 44px rgba(0,0,0,0.70), 0 0 0 0.5px rgba(255,255,255,0.05) inset'
           :'0 14px 44px rgba(0,0,0,0.20), 0 0 0 0.5px rgba(255,255,255,0.55) inset',
@@ -1888,7 +1887,7 @@ function TabBar({C,tabIdx,onTabTap,scheme}) {
             <button key={t.id} onClick={()=>onTabTap(i)}
               className="rv-btn rv-tab-btn"
               style={{
-                padding:'5px 10px',
+                padding:'7px 14px',
                 borderRadius:30,
                 background:(!isAI&&active)?(scheme==='dark'?'rgba(255,255,255,0.09)':'rgba(0,0,0,0.06)'):'transparent',
                 border:'none',cursor:'pointer',
@@ -2305,12 +2304,12 @@ export default function App() {
         </div>
       )}
 
-      {/* TAB BAR — pill flottante, si nasconde quando tastiera aperta */}
-      <div style={{position:'fixed',left:'44%',zIndex:50,width:'calc(100% - 60px)',
+      {/* TAB BAR */}
+      <div style={{position:'fixed',left:'50%',zIndex:50,
         transform: inputFocused ? 'translateX(-50%) translateY(120%)' : 'translateX(-50%) translateY(0)',
         opacity: inputFocused ? 0 : 1,
         pointerEvents: inputFocused ? 'none' : 'auto',
-        bottom: 'calc(-17px + env(safe-area-inset-bottom, 0px))',
+        bottom: 17,
         transition: 'transform 0.28s cubic-bezier(0.34, 1.18, 0.64, 1), opacity 0.22s ease-out',
       }}>
         <TabBar C={C} tabIdx={tabIdx} onTabTap={handleTabTap} scheme={scheme}/>
