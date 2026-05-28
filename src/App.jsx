@@ -1470,8 +1470,8 @@ const RvAppIcon = ({ children, gradient, active, size = 32 }) => (
 /* Tab icon glyphs — 14×14 filled, white on gradient bg */
 const RvIconOverview = ({ color }) => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-    <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" fill={color} fillOpacity="0.25" stroke={color} strokeWidth="2"/>
-    <polyline points="9 22 9 12 15 12 15 22" stroke={color} strokeWidth="2" strokeLinecap="round"/>
+    <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" fill={color} stroke={color} strokeWidth="2"/>
+    <polyline points="9 22 9 12 15 12 15 22" stroke={color} strokeWidth="2.5" strokeLinecap="round"/>
   </svg>
 );
 const RvIconSpese = ({ color }) => (
@@ -1619,19 +1619,18 @@ const TAB_ICONS={overview:RvIconOverview,spese:RvIconSpese,movimenti:RvIconMovim
 
 function TabBar({C,tabIdx,onTabTap,scheme}) {
   return (
-    <div style={{
-      pointerEvents:'auto',
-    }}>
+    <div style={{pointerEvents:'auto',width:'100%'}}>
       <div style={{
         background:C.glassBar,
         backdropFilter:'saturate(200%) blur(52px)',
         WebkitBackdropFilter:'saturate(200%) blur(52px)',
         border:`0.5px solid ${C.sep2}`,
         borderRadius:36,
-        padding:'4px 12px',
+        padding:'3px 8px',
         display:'flex',
         alignItems:'center',
-        gap:12,
+        justifyContent:'space-around',
+        width:'100%',
         boxShadow:scheme==='dark'
           ?'0 14px 44px rgba(0,0,0,0.70), 0 0 0 0.5px rgba(255,255,255,0.05) inset'
           :'0 14px 44px rgba(0,0,0,0.20), 0 0 0 0.5px rgba(255,255,255,0.55) inset',
@@ -2063,8 +2062,8 @@ export default function App() {
       )}
 
       {/* TAB BAR — pill flottante, si nasconde quando tastiera aperta */}
-      <div style={{position:'fixed',left:'50%',zIndex:50,
-        transform: inputFocused ? 'translateX(-50%) translateY(120%)' : 'translateX(-50%) translateY(0)',
+      <div style={{position:'fixed',left:16,right:16,zIndex:50,
+        transform: inputFocused ? 'translateY(120%)' : 'translateY(0)',
         opacity: inputFocused ? 0 : 1,
         pointerEvents: inputFocused ? 'none' : 'auto',
         bottom: 'calc(-17px + env(safe-area-inset-bottom, 0px))',
