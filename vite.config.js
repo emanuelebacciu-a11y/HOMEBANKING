@@ -6,5 +6,6 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     assetsInlineLimit: 0,
+    chunkSizeWarningLimit: 1000,
   },
 })

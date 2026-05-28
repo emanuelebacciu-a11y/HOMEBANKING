@@ -902,16 +902,17 @@ const fmt = {
 };
 
 /* ============= COMPONENTS ============= */
+const PADDING_MAP = {'p-5':'20px','p-4':'16px','p-3':'12px','':'0px'};
 const Glass = ({C,children,className='',padding='p-5',radius=RADIUS.card,style={}}) => (
   <div className={`rv-card ${className}`} style={{background:C.glass,backdropFilter:'blur(32px)',WebkitBackdropFilter:'blur(32px)',border:`0.5px solid ${C.sep2}`,borderRadius:radius,overflow:'hidden',position:'relative',...style}}>
-    <div className="absolute inset-0 rv-shimmer-overlay" style={{opacity:0.5}}/>
-    <div className={padding} style={{position:'relative'}}>{children}</div>
+    <div className="rv-shimmer-overlay" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:0.5}}/>
+    <div style={{position:'relative',padding:PADDING_MAP[padding]??padding}}>{children}</div>
   </div>
 );
 const SectionTitle = ({C,children}) => <h2 style={{fontFamily:FONT.display,fontSize:22,fontWeight:700,letterSpacing:'-0.4px',color:C.primary,marginBottom:16}}>{children}</h2>;
 const MetricCard = ({C,label,value,sub,color,delay=0}) => (
   <div className={`rv-card rv-stagger-${delay+1}`} style={{background:C.glass,border:`0.5px solid ${C.sep2}`,borderRadius:RADIUS.inset,padding:'16px 18px',position:'relative',overflow:'hidden'}}>
-    <div className="absolute inset-0 rv-shimmer-overlay" style={{opacity:0.4}}/>
+    <div className="rv-shimmer-overlay" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:0.4}}/>
     <div style={{position:'relative'}}>
       <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:500,letterSpacing:'0.2px',marginBottom:8}}>{label}</div>
       <div style={{color:color||C.primary,fontSize:26,fontFamily:FONT.display,fontWeight:700,letterSpacing:'-0.6px',lineHeight:1,fontVariantNumeric:'tabular-nums',...neonText(color||C.primary,C.scheme)}}>{value}</div>
@@ -1997,14 +1998,14 @@ export default function App() {
   const currentTab=TAB_ORDER[tabIdx];
 
   return (
-    <div className="relative" style={{
+    <div style={{
       background:C.bg, color:C.primary, fontFamily:FONT.text,
       WebkitFontSmoothing:'antialiased', MozOsxFontSmoothing:'grayscale',
       position:'fixed', top:0, left:0, right:0, bottom:0,
       height: appHeight,
       display:'flex', flexDirection:'column',
     }}>
-      <div className="fixed inset-0 pointer-events-none" style={{background:C.ambient}}/>
+      <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,pointerEvents:'none',background:C.ambient}}/>
 
       <SettingsModal
         C={C} open={settingsOpen} onClose={()=>setSettingsOpen(false)}
@@ -2015,7 +2016,7 @@ export default function App() {
       />
 
       {/* HEADER — identico a XAUTrader: overflow:hidden, transform translateY(-6px) */}
-      <header className="sticky z-30" style={{
+      <header style={{position:'sticky',zIndex:30,
         top: 0,
         transform: 'translateY(0)',
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
@@ -2024,10 +2025,10 @@ export default function App() {
         borderBottom: `0.5px solid ${C.sep}`,
         paddingTop: 'env(safe-area-inset-top, 0px)',
       }}>
-        <div className="absolute inset-0 rv-shimmer-overlay" style={{opacity:scheme==='dark'?1:0.4}}/>
-        <div className="max-w-7xl mx-auto px-4 py-1 flex items-center justify-between gap-2 relative" style={{minHeight:44}}>
+        <div className="rv-shimmer-overlay" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:scheme==='dark'?1:0.4}}/>
+        <div style={{maxWidth:'100%',margin:'0 auto',padding:'4px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,position:'relative',minHeight:44}}>
           <span style={{fontFamily:FONT.text,fontSize:13,fontWeight:600,color:C.primary,letterSpacing:'-0.2px',flexShrink:0,marginRight:8}}>{activeAccountId==='__all__'?'Tutti i conti':activeAcc?.name||'HomeBanking'}</span>
-          <div className="flex items-center gap-1.5">
+          <div style={{display:'flex',alignItems:'center',gap:6}}>
             {accounts.length>0&&<AccountPill C={C} accounts={accounts} activeAccountId={activeAccountId} setActiveAccountId={setActiveAccountId}/>}
             <button onClick={()=>setSettingsOpen(true)} className="rv-btn" style={{width:30,height:30,borderRadius:15,background:C.glass2,border:`0.5px solid ${C.sep}`,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
@@ -2062,7 +2063,7 @@ export default function App() {
       )}
 
       {/* TAB BAR — pill flottante, si nasconde quando tastiera aperta */}
-      <div className="fixed left-1/2 z-50" style={{
+      <div style={{position:'fixed',left:'50%',zIndex:50,
         transform: inputFocused ? 'translateX(-50%) translateY(120%)' : 'translateX(-50%) translateY(0)',
         opacity: inputFocused ? 0 : 1,
         pointerEvents: inputFocused ? 'none' : 'auto',
