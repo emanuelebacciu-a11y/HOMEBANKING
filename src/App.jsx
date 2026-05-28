@@ -2306,7 +2306,7 @@ export default function App() {
       )}
 
       {/* TAB BAR — pill flottante, si nasconde quando tastiera aperta */}
-      <div style={{position:'fixed',left:'50%',zIndex:50,width:'calc(100% - 80px)',
+      <div style={{position:'fixed',left:'44%',zIndex:50,width:'calc(100% - 60px)',
         transform: inputFocused ? 'translateX(-50%) translateY(120%)' : 'translateX(-50%) translateY(0)',
         opacity: inputFocused ? 0 : 1,
         pointerEvents: inputFocused ? 'none' : 'auto',
