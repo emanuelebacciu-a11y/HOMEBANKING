@@ -1262,7 +1262,7 @@ Rispondi sempre in italiano, in modo conciso e diretto. Non dare consigli operat
       </div>
 
       {/* Input bar */}
-      <div style={{flexShrink:0,padding:'5px 14px',paddingBottom:'calc(82px + env(safe-area-inset-bottom, 0px))',background:"inherit",borderTop:`0.5px solid ${C.sep}`}}>
+      <div style={{flexShrink:0,padding:'4px 12px',paddingBottom:'calc(82px + env(safe-area-inset-bottom, 0px))',background:"inherit",borderTop:`0.5px solid ${C.sep}`}}>
         <div style={{display:'flex',alignItems:'flex-end',gap:8,background:C.glass,backdropFilter:'blur(20px)',WebkitBackdropFilter:'blur(20px)',border:`0.5px solid ${C.sep2}`,borderRadius:24,padding:'6px 6px 6px 14px',marginBottom:6}}>
           <textarea
             ref={inputRef}
@@ -1609,7 +1609,7 @@ const RvIconAI = ({ color = '#FFFFFF', size = 34 } = {}) => (
 /* ============= TAB BAR (floating pill — xautrader style) ============= */
 const TAB_ORDER=['overview','movimenti','ai','spese','analytics'];
 const TAB_DEFS=[
-  {id:'overview',  label:'Home',      gradient:(C)=>`linear-gradient(135deg, ${C.green}, #00a010)`},
+  {id:'overview',  label:'Home',      gradient:(C)=>C.green},
   {id:'movimenti', label:'Storico',   gradient:()=>`linear-gradient(160deg, #72E4F8, #3DB8D4)`},
   {id:'ai',        label:'AI',        gradient:null},
   {id:'spese',     label:'Spese',     gradient:(C)=>`linear-gradient(135deg, ${C.red}, #b3001a)`},
@@ -1628,7 +1628,7 @@ function TabBar({C,tabIdx,onTabTap,scheme}) {
         WebkitBackdropFilter:'saturate(200%) blur(52px)',
         border:`0.5px solid ${C.sep2}`,
         borderRadius:36,
-        padding:'5px 14px',
+        padding:'4px 12px',
         display:'flex',
         alignItems:'center',
         gap:12,
