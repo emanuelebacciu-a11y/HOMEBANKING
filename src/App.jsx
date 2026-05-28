@@ -201,6 +201,8 @@ function injectPWAMeta() {
         const c = document.createElement('canvas');
         c.width = size; c.height = size;
         const ctx = c.getContext('2d');
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, size, size);
         ctx.drawImage(img, 0, 0, size, size);
         resolve(c.toDataURL('image/png'));
         URL.revokeObjectURL(url);
