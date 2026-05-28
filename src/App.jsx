@@ -1900,7 +1900,7 @@ function TabBar({C,tabIdx,onTabTap,scheme}) {
         WebkitBackdropFilter:'saturate(200%) blur(52px)',
         border:`0.5px solid ${C.sep2}`,
         borderRadius:36,
-        padding:'5px 16px',
+        padding:'4px 16px',
         display:'flex',
         alignItems:'center',
         gap:12,
@@ -2288,9 +2288,9 @@ export default function App() {
       />
 
       {/* HEADER — identico a XAUTrader: overflow:hidden, transform translateY(-6px) */}
-      <header style={{position:'sticky',zIndex:30,
+      <header style={{position:'sticky',zIndex:30,overflow:'hidden',
         top: 0,
-        transform: 'translateY(0)',
+        transform: 'translateY(-6px)',
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
@@ -2325,7 +2325,7 @@ export default function App() {
         </div>
       ) : (
         <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingBottom:0}}>
-        <div style={{paddingBottom:'calc(90px + env(safe-area-inset-bottom, 0px))', paddingTop:12}}>
+        <div style={{paddingBottom:'calc(96px + env(safe-area-inset-bottom, 0px))', paddingTop:12}}>
             {currentTab==='overview'  &&<OverviewPage   C={C} data={data} txs={activeTxs}/>}
             {currentTab==='spese'     &&<SpesePage      C={C} data={data} txs={activeTxs}/>}
             {currentTab==='movimenti' &&<MovimentiPage  C={C} txs={activeTxs}/>}
