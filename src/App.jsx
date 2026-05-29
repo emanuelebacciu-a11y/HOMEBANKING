@@ -1171,7 +1171,6 @@ if (!GEMINI_API_KEY) {
 
 function AIPage({C,data,txs,setInputFocused}) {
   const [isFocused,setIsFocused]=useState(false);
-  ...
 
   const CHAT_KEY='hb_chat_history';
   const [messages,setMessages]=useState(()=>{
