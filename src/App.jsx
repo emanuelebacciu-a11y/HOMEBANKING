@@ -2206,7 +2206,7 @@ function AccountPill({C,accounts,activeAccountId,setActiveAccountId}) {
   if(!current) return null;
 
   return (
-    <div style={{position:'relative'}}>
+    <div style={{position:'relative',zIndex:100}}>
       <button onClick={()=>{setOpen(o=>!o);haptic.selection();}} className="rv-btn" style={{
         display:'flex',alignItems:'center',gap:6,padding:'5px 10px',
         background:C.glass2,border:`0.5px solid ${C.sep2}`,borderRadius:RADIUS.pill,
@@ -2219,12 +2219,12 @@ function AccountPill({C,accounts,activeAccountId,setActiveAccountId}) {
       </button>
       {open&&(
         <>
-          <div onClick={()=>setOpen(false)} style={{position:'fixed',inset:0,zIndex:998}}/>
+          <div onClick={()=>setOpen(false)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:998}}/>
           <div className="rv-card" style={{
-            position:'fixed',top:60,right:12,minWidth:190,zIndex:9999,
+            position:'absolute',top:'calc(100% + 6px)',right:0,minWidth:190,zIndex:9999,
             background:C.glass,backdropFilter:'blur(40px)',WebkitBackdropFilter:'blur(40px)',
             border:`0.5px solid ${C.sep2}`,borderRadius:18,overflow:'hidden',
-            boxShadow:'0 8px 32px rgba(0,0,0,0.35)',
+            boxShadow:'0 8px 32px rgba(0,0,0,0.45)',
           }}>
           {options.map((a,i)=>(
             <div key={a.id} className="rv-row" onClick={()=>{setActiveAccountId(a.id);setOpen(false);haptic.light();}} style={{
