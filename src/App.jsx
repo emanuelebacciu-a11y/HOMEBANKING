@@ -1161,10 +1161,18 @@ function MovimentiPage({C,txs}) {
 }
 
 /* ============= AI ============= */
-const GEMINI_API_KEY = 'AIzaSyBHMzuLYtPUZxg-AahLWv0xkM9QCkzzRdk'; // placeholder — replace with real key
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+
+if (!GEMINI_API_KEY) {
+  console.warn(
+    'Gemini API key mancante. Imposta VITE_GEMINI_API_KEY nel file .env.local'
+  );
+}
 
 function AIPage({C,data,txs,setInputFocused}) {
   const [isFocused,setIsFocused]=useState(false);
+  ...
+
   const CHAT_KEY='hb_chat_history';
   const [messages,setMessages]=useState(()=>{
     try{const s=localStorage.getItem(CHAT_KEY);return s?JSON.parse(s):[];}catch{return [];}
