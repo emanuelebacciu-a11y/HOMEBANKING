@@ -180,109 +180,9 @@ const RADIUS = { card: 28, inset: 20, pill: 999 };
 const neonText = (color, scheme) => scheme !== 'dark' ? {} : { textShadow: `0 0 24px ${color}1E, 0 0 8px ${color}0F` };
 
 function injectPWAMeta() {
-  if (typeof document === 'undefined') return;
-  if (document.getElementById('rv-pwa-meta')) return;
-
-  // Build the SVG icon (same as favicon.svg — black bg, violet bars)
-  const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <rect width="64" height="64" rx="15" fill="#000000"/>
-  <rect x="11" y="35" width="10" height="18" rx="2" fill="#BF00FF"/>
-  <rect x="27" y="24" width="10" height="29" rx="2" fill="#BF00FF"/>
-  <rect x="43" y="10" width="10" height="43" rx="2" fill="#BF00FF"/>
-</svg>`;
-
-  // For PWA we need larger icons — create 192 and 512 sized PNGs via canvas
-  function svgToPng(svgStr, size) {
-    return new Promise(resolve => {
-      const blob = new Blob([svgStr], { type: 'image/svg+xml' });
-      const url = URL.createObjectURL(blob);
-      const img = new Image();
-      img.onload = () => {
-        const c = document.createElement('canvas');
-        c.width = size; c.height = size;
-        const ctx = c.getContext('2d');
-        ctx.fillStyle = '#000000';
-        ctx.fillRect(0, 0, size, size);
-        ctx.drawImage(img, 0, 0, size, size);
-        resolve(c.toDataURL('image/png'));
-        URL.revokeObjectURL(url);
-      };
-      img.src = url;
-    });
-  }
-
-  // Inject apple-touch-icon and theme-color immediately
-  const appleLink = document.createElement('link');
-  appleLink.id = 'rv-pwa-meta';
-  appleLink.rel = 'apple-touch-icon';
-
-  // For apple-touch-icon we need a solid background (Apple ignores transparency)
-  const svgApple = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" fill="none">
-  <rect width="180" height="180" fill="#000000"/>
-  <rect x="31" y="98" width="28" height="51" rx="5" fill="#BF00FF"/>
-  <rect x="76" y="68" width="28" height="81" rx="5" fill="#BF00FF"/>
-  <rect x="121" y="28" width="28" height="121" rx="5" fill="#BF00FF"/>
-</svg>`;
-
-  svgToPng(svgApple, 180).then(dataUrl => {
-    appleLink.href = dataUrl;
-    document.head.appendChild(appleLink);
-  });
-
-  // theme-color = pure black for OLED
-  let tc = document.querySelector('meta[name="theme-color"]');
-  if (!tc) {
-    tc = document.createElement('meta');
-    tc.name = 'theme-color';
-    document.head.appendChild(tc);
-  }
-  tc.content = '#000000';
-
-  // status-bar-style = black for iOS
-  let sbs = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
-  if (!sbs) {
-    sbs = document.createElement('meta');
-    sbs.name = 'apple-mobile-web-app-status-bar-style';
-    document.head.appendChild(sbs);
-  }
-  sbs.content = 'black';
-
-  // capable
-  let cap = document.querySelector('meta[name="apple-mobile-web-app-capable"]');
-  if (!cap) {
-    cap = document.createElement('meta');
-    cap.name = 'apple-mobile-web-app-capable';
-    cap.content = 'yes';
-    document.head.appendChild(cap);
-  }
-
-  // Web App Manifest (inline blob)
-  svgToPng(svgIcon, 192).then(icon192 => {
-    svgToPng(svgIcon, 512).then(icon512 => {
-      const manifest = {
-        name: 'HomeBanking',
-        short_name: 'HomeBanking',
-        start_url: '/',
-        display: 'standalone',
-        background_color: '#000000',
-        theme_color: '#000000',
-        icons: [
-          { src: icon192, sizes: '192x192', type: 'image/png' },
-          { src: icon512, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-        ],
-      };
-      const blob = new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' });
-      const url = URL.createObjectURL(blob);
-      let link = document.querySelector('link[rel="manifest"]');
-      if (!link) {
-        link = document.createElement('link');
-        link.rel = 'manifest';
-        document.head.appendChild(link);
-      }
-      link.href = url;
-    });
-  });
+  // All PWA meta is static in index.html — nothing to do at runtime
 }
+
 
 function useColorScheme() {
   const [s, setS] = useState(() => window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -573,10 +473,8 @@ function parseRevolutLines(lines) {
 
   // Log for debugging (remove after fix confirmed)
   if (typeof console !== 'undefined') {
-    console.log('[RevolutParser] Summary totals found:', { summaryIncome, summaryExpense });
     // Also log all lines containing large amounts to help debug
     const largeAmountLines = lines.filter(l => /\d{1,3}\.\d{3},\d{2}€/.test(l)).slice(0, 20);
-    console.log('[RevolutParser] Lines with large amounts:', largeAmountLines);
   }
 
   // ── STEP 1: strip duplicate sections ────────────────────────────────────────
@@ -815,11 +713,13 @@ function analyzeTransactions(txs) {
     expense = Math.round(expense * 100) / 100;
   }
   if (typeof console !== 'undefined') {
-    console.log('[analyzeTransactions] _summaryIncome:', txs._summaryIncome, '_summaryExpense:', txs._summaryExpense);
-    console.log('[analyzeTransactions] final income:', income, 'expense:', expense);
   }
   const netFlow = Math.round((income - expense) * 100) / 100;
-  const totalFees = Math.round(txs.reduce((s,t)=>s+Math.abs(t.fee||0),0) * 100) / 100;
+  // Fees: CSV 'Costo' column is 0 — use 'Commissione' tipo rows' abs(amount) instead
+  const totalFees = Math.round(
+    txs.filter(t => (t.type||'').toLowerCase().trim() === 'commissione')
+       .reduce((s,t) => s + Math.abs(t.amount||0), 0) * 100
+  ) / 100;
   const balHistory = sorted.filter(t=>t.balance!=null).map(t=>({date:t.dateStr,balance:t.balance}));
   const byMonth = {};
   for (const t of sorted) {
@@ -842,18 +742,8 @@ function analyzeTransactions(txs) {
   const catMap = {};
   for (const t of txs) {
     if (t.internal || t.amount>=0) continue;
-    const desc=(t.description+' '+(t.type||'')).toLowerCase();
-    let cat='Altro';
-    if (/amazon|shop|acquist|mercato|market|aliexpress|ebay|zalando|fashion|h&m|zara/i.test(desc)) cat='Shopping';
-    else if (/restaurant|ristorante|pizz|sushi|burger|mcdonald|kfc|bar|caffe|food|deliveroo|glovo|uber eat/i.test(desc)) cat='Cibo & Ristoranti';
-    else if (/netflix|spotify|apple|disney|prime|youtube|abbonamento|subscription/i.test(desc)) cat='Abbonamenti';
-    else if (/affitto|rent|appartamento|casa|housing/i.test(desc)) cat='Affitto';
-    else if (/farmac|medic|doctor|hospital|health|salute/i.test(desc)) cat='Salute';
-    else if (/atm|prelievo|cash|bancomat/i.test(desc)) cat='Contanti';
-    else if (/taxi|uber|bolt|treno|trenitalia|italo|frecciarossa|flixbus|trasport|metro|bus/i.test(desc)) cat='Trasporti';
-    else if (/hotel|airbnb|booking|viaggio|vacanza|travel|ryanair|easyjet|flight|volo/i.test(desc)) cat='Viaggi';
-    else if (/luce|gas|acqua|internet|tim|vodafone|iliad|wind|utility|bolletta/i.test(desc)) cat='Utenze';
-    else if (/transfer|bonifico|pagamento|payment|sent/i.test(t.type?.toLowerCase()||'')) cat='Trasferimenti';
+    if ((t.type||'').toLowerCase().trim()==='commissione') continue;
+    const cat = categorizeTx(t);
     if (!catMap[cat]) catMap[cat]=0; catMap[cat]+=Math.abs(t.amount);
   }
   const categories = Object.entries(catMap).sort((a,b)=>b[1]-a[1]).map(([name,amount])=>({name,amount}));
@@ -878,17 +768,19 @@ function analyzeTransactions(txs) {
   for (let w=11;w>=0;w--) {
     const end=new Date(now); end.setDate(end.getDate()-w*7);
     const start=new Date(end); start.setDate(start.getDate()-7);
-    const week=txs.filter(t=>t.date>=start&&t.date<end);
+    const week=txs.filter(t=>t.date>=start&&t.date<end&&!t.internal);
     weeklyData.push({label:`S${12-w}`,income:week.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0),expense:week.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0)});
   }
   const firstDate=sorted[0].date, lastDate=sorted[sorted.length-1].date;
   const days=Math.max(1,Math.round((lastDate-firstDate)/86400000));
-  const avgDailySpend = expense / days;
+  // Use active expense days (days with at least 1 real expense) for a more accurate daily avg
+  const activeDays = new Set(sorted.filter(t=>!t.internal&&t.amount<0).map(t=>t.dateStr)).size;
+  const avgDailySpend = activeDays > 0 ? expense / activeDays : expense / days;
   return {
     income,expense,netFlow,totalFees,savingRate:income>0?((income-expense)/income)*100:0,
     balHistory,monthlyData,categories,currencies:[...new Set(txs.map(t=>t.currency))],
     firstDate,lastDate,days,avgDailySpend,
-    topMerchants,weeklyData,recurring,totalTxs:txs.length,
+    topMerchants,weeklyData,recurring,totalTxs:txs.filter(t=>!t.internal).length,
     latestBalance:sorted[sorted.length-1].balance,
     latestTxs:sorted.slice(-30).reverse(),
   };
@@ -922,6 +814,27 @@ const MetricCard = ({C,label,value,sub,color,delay=0}) => (
     </div>
   </div>
 );
+/* ============= SHARED CATEGORIZE ============= */
+function categorizeTx(t) {
+  const desc = (t.description + ' ' + (t.type||'')).toLowerCase();
+  if (/nomupay|nomupayvt|mexc|mexc global|kraken|ftmo|axicorp|axitrader|bybit|binance|coinbase|forex|cfd|trading|broker|invest|spherenode|not ltd/i.test(desc)) return 'Investimenti';
+  if (/amazon(?! prime)|shop|acquist|mercato|market|aliexpress|ebay|zalando|fashion|h&m|zara|galaxus/i.test(desc)) return 'Shopping';
+  if (/restaurant|ristorante|pizz|sushi|burger|mcdonald|kfc|bar |caffe|trattoria|osteria|food|deliveroo|glovo|uber eat|just eat/i.test(desc)) return 'Cibo & Ristoranti';
+  if (/netflix|spotify|amazon prime|disney|prime video|youtube premium|abbonamento|subscription|tradingview|apple one/i.test(desc)) return 'Abbonamenti';
+  if (/apple(?! one| pay| prime)|icloud|app store|itunes/i.test(desc)) return 'Abbonamenti';
+  if (/affitto|rent|appartamento|housing/i.test(desc)) return 'Affitto';
+  if (/farmac|medic|doctor|hospital|health|salute|ottic/i.test(desc)) return 'Salute';
+  if (/atm|prelievo|cash|bancomat/i.test(desc)) return 'Contanti';
+  if (/taxi|uber(?! eat)|bolt|treno|trenitalia|italo|frecciarossa|flixbus|trasport|metro |autobus|blablacar/i.test(desc)) return 'Trasporti';
+  if (/hotel|airbnb|booking|viaggio|vacanza|travel|ryanair|easyjet|flight|volo|ryanair/i.test(desc)) return 'Viaggi';
+  if (/luce|gas |acqua|internet|tim |vodafone|iliad|wind|utility|bolletta|energia/i.test(desc)) return 'Utenze';
+  // Only flag as trasferimento if the TYPE is explicitly a transfer (not payment)
+  const tipo = (t.type||'').toLowerCase().trim();
+  if (tipo === 'pagamento' || tipo === 'pagamento con carta') return 'Altro';
+  if (/transfer|bonifico/i.test(tipo)) return 'Trasferimenti';
+  return 'Altro';
+}
+
 const SegCtrl = ({C,options,value,onChange}) => (
   <div style={{display:'flex',background:C.glass2,borderRadius:RADIUS.pill,padding:3,gap:2}}>
     {options.map(o=>(
@@ -934,37 +847,49 @@ const SegCtrl = ({C,options,value,onChange}) => (
 
 /* ============= OVERVIEW ============= */
 function OverviewPage({C,data,txs}) {
+  const [period,setPeriod]=useState('all');
+  const [customFrom,setCustomFrom]=useState('');
+  const [customTo,setCustomTo]=useState('');
   const cur=txs[0]?.currency||'EUR';
-  const netColor=data.netFlow>=0?C.green:C.red;
-  const heroLogo = '/favicon.svg';
+
+  const periodTxs=useMemo(()=>filterByPeriod(txs,period,customFrom,customTo),[txs,period,customFrom,customTo]);
+  const periodData=useMemo(()=>periodTxs.length?analyzeTransactions(periodTxs):null,[periodTxs]);
+  const d=period==='all'?data:periodData;
+  if(!d) return null;
+  const netColor=d.netFlow>=0?C.green:C.red;
+
   return (
     <div className="rv-page" style={{padding:'0 16px 24px',display:'flex',flexDirection:'column',gap:16}}>
+      <SegCtrl C={C} options={PERIOD_OPTS} value={period} onChange={setPeriod}/>
+      {period==='custom'&&<CustomDatePicker C={C} from={customFrom} to={customTo} onChange={(f,t)=>{setCustomFrom(f);setCustomTo(t);}}/>}
       <Glass C={C}>
         <div style={{textAlign:'center',padding:'8px 0'}}>
-          <div style={{color:C.secondary,fontSize:12,fontFamily:FONT.text,fontWeight:500,marginBottom:8}}>Saldo Attuale</div>
+          <div style={{color:C.secondary,fontSize:12,fontFamily:FONT.text,fontWeight:500,marginBottom:8}}>
+            {period==='all'?'Saldo Attuale':'Flusso Netto Periodo'}
+          </div>
           <div style={{color:C.primary,fontSize:48,fontFamily:FONT.display,fontWeight:700,letterSpacing:'-2px',lineHeight:1,fontVariantNumeric:'tabular-nums',...neonText(C.primary,C.scheme)}}>
-            {data.latestBalance!=null?fmt.currency(data.latestBalance,cur):'—'}
+            {period==='all'&&d.latestBalance!=null?fmt.currency(d.latestBalance,cur):fmt.currency(d.netFlow,cur)}
           </div>
           <div style={{display:'flex',justifyContent:'center',marginTop:10}}>
             <div style={{display:'inline-flex',alignItems:'center',gap:5,padding:'5px 12px',background:`${netColor}18`,border:`0.5px solid ${netColor}50`,borderRadius:RADIUS.pill}}>
-              <span style={{color:netColor,fontSize:12,fontFamily:FONT.mono,fontWeight:600}}>{data.netFlow>=0?'+':''}{fmt.currency(data.netFlow,cur)}</span>
+              <span style={{color:netColor,fontSize:12,fontFamily:FONT.mono,fontWeight:600}}>{d.netFlow>=0?'+':''}{fmt.currency(d.netFlow,cur)}</span>
               <span style={{color:C.tertiary,fontSize:10}}>flusso netto</span>
             </div>
           </div>
-          <div style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono,marginTop:8}}>{fmt.date(data.firstDate)} → {fmt.date(data.lastDate)} · {data.days}g</div>
+          <div style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono,marginTop:8}}>{fmt.date(d.firstDate)} → {fmt.date(d.lastDate)} · {d.days}g</div>
         </div>
       </Glass>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-        <MetricCard C={C} label="Entrate" value={fmt.currency(data.income,cur)} color={C.green} delay={0}/>
-        <MetricCard C={C} label="Uscite" value={fmt.currency(data.expense,cur)} color={C.red} delay={1}/>
-        <MetricCard C={C} label="Saving Rate" value={fmt.pct(data.savingRate)} color={data.savingRate>0?C.cyan:C.orange} delay={2} sub="(entrate−uscite)/entrate"/>
-        <MetricCard C={C} label="Spesa/giorno" value={fmt.currency(data.avgDailySpend,cur)} color={C.orange} delay={3}/>
+        <MetricCard C={C} label="Entrate" value={fmt.currency(d.income,cur)} color={C.green} delay={0}/>
+        <MetricCard C={C} label="Uscite" value={fmt.currency(d.expense,cur)} color={C.red} delay={1}/>
+        <MetricCard C={C} label="Saving Rate" value={fmt.pct(d.savingRate)} color={d.savingRate>0?C.cyan:C.orange} delay={2} sub="(entrate−uscite)/entrate"/>
+        <MetricCard C={C} label="Spesa/giorno" value={fmt.currency(d.avgDailySpend,cur)} color={C.orange} delay={3}/>
       </div>
-      {data.balHistory.length>1&&(
+      {d.balHistory.length>1&&(
         <Glass C={C}>
           <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:12}}>Andamento Saldo</div>
           <ResponsiveContainer width="100%" height={130}>
-            <AreaChart data={data.balHistory} margin={{left:-20,right:0,top:4,bottom:0}}>
+            <AreaChart data={d.balHistory||[]} margin={{left:-20,right:0,top:4,bottom:0}}>
               <defs><linearGradient id="balGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.cyan} stopOpacity={0.3}/><stop offset="95%" stopColor={C.cyan} stopOpacity={0}/></linearGradient></defs>
               <CartesianGrid strokeDasharray="3 3" stroke={C.sep} vertical={false}/>
               <XAxis dataKey="date" tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} interval="preserveStartEnd"/>
@@ -974,11 +899,11 @@ function OverviewPage({C,data,txs}) {
           </ResponsiveContainer>
         </Glass>
       )}
-      {data.monthlyData.length>0&&(
+      {d.monthlyData.length>0&&(
         <Glass C={C}>
           <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:12}}>Entrate vs Uscite Mensili</div>
           <ResponsiveContainer width="100%" height={140}>
-            <BarChart data={data.monthlyData.slice(-12)} margin={{left:-20,right:0,top:4,bottom:0}}>
+            <BarChart data={(d.monthlyData||[]).slice(-12)} margin={{left:-20,right:0,top:4,bottom:0}}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.sep} vertical={false}/>
               <XAxis dataKey="month" tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={fmt.monthLabel}/>
               <YAxis tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={v=>fmt.short(v)}/>
@@ -993,7 +918,7 @@ function OverviewPage({C,data,txs}) {
         </Glass>
       )}
       <Glass C={C}>
-        {[{label:'Transazioni totali',val:data.totalTxs.toString()},{label:'Commissioni pagate',val:fmt.currency(data.totalFees,cur),color:C.orange},{label:'Valute',val:data.currencies.join(', ')}].map((r,i)=>(
+        {[{label:'Transazioni totali',val:d.totalTxs.toString()},{label:'Commissioni pagate',val:fmt.currency(d.totalFees,cur),color:C.orange},{label:'Valute',val:d.currencies.join(', ')}].map((r,i)=>(
           <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingBottom:i<2?'12px':0,borderBottom:i<2?`0.5px solid ${C.sep}`:'none',marginBottom:i<2?12:0}}>
             <span style={{color:C.secondary,fontSize:13,fontFamily:FONT.text}}>{r.label}</span>
             <span style={{color:r.color||C.primary,fontSize:13,fontFamily:FONT.mono,fontWeight:600}}>{r.val}</span>
@@ -1005,50 +930,86 @@ function OverviewPage({C,data,txs}) {
 }
 
 /* ============= SPESE ============= */
+const PERIOD_OPTS = [
+  {id:'7d',label:'7G'},{id:'month',label:'Mese'},{id:'3m',label:'3M'},
+  {id:'year',label:'Anno'},{id:'all',label:'Tutto'},{id:'custom',label:'↔'},
+];
+function filterByPeriod(list, period, customFrom, customTo) {
+  const now = new Date();
+  if (period==='7d')    { const s=new Date(now);s.setDate(s.getDate()-7);return list.filter(t=>t.date>=s); }
+  if (period==='month') { const s=new Date(now.getFullYear(),now.getMonth(),1);return list.filter(t=>t.date>=s); }
+  if (period==='3m')    { const s=new Date(now);s.setMonth(s.getMonth()-3);return list.filter(t=>t.date>=s); }
+  if (period==='year')  { const s=new Date(now.getFullYear(),0,1);return list.filter(t=>t.date>=s); }
+  if (period==='custom'&&customFrom&&customTo) {
+    const f=new Date(customFrom), t2=new Date(customTo); t2.setHours(23,59,59);
+    return list.filter(t=>t.date>=f&&t.date<=t2);
+  }
+  return list;
+}
+
+function CustomDatePicker({C, from, to, onChange}) {
+  return (
+    <div style={{display:'flex',gap:8,alignItems:'center',padding:'8px 12px',background:C.glass2,border:`0.5px solid ${C.sep}`,borderRadius:RADIUS.inset}}>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="18" rx="2" stroke={C.tertiary} strokeWidth="2"/><path d="M16 2v4M8 2v4M3 10h18" stroke={C.tertiary} strokeWidth="2" strokeLinecap="round"/></svg>
+      <input type="date" value={from} onChange={e=>onChange(e.target.value,to)} style={{flex:1,background:'transparent',border:'none',outline:'none',color:C.secondary,fontSize:12,fontFamily:FONT.mono,colorScheme:'dark'}}/>
+      <span style={{color:C.tertiary,fontSize:11}}>→</span>
+      <input type="date" value={to} onChange={e=>onChange(from,e.target.value)} style={{flex:1,background:'transparent',border:'none',outline:'none',color:C.secondary,fontSize:12,fontFamily:FONT.mono,colorScheme:'dark'}}/>
+    </div>
+  );
+}
+
 function SpesePage({C,data,txs}) {
   const [period,setPeriod]=useState('all');
+  const [customFrom,setCustomFrom]=useState('');
+  const [customTo,setCustomTo]=useState('');
+  const [activeCat,setActiveCat]=useState(null);
   const cur=txs[0]?.currency||'EUR';
-  const filtered=useMemo(()=>{
-    const now=new Date();
-    let list=txs.filter(t=>t.amount<0);
-    if(period==='month'){const s=new Date(now.getFullYear(),now.getMonth(),1);list=list.filter(t=>t.date>=s);}
-    if(period==='3m'){const s=new Date(now);s.setMonth(s.getMonth()-3);list=list.filter(t=>t.date>=s);}
-    return list;
-  },[txs,period]);
-  const total=filtered.reduce((s,t)=>s+Math.abs(t.amount),0);
+
+  const baseFiltered=useMemo(()=>{
+    let list=txs.filter(t=>t.amount<0&&!t.internal&&(t.type||'').toLowerCase().trim()!=='commissione');
+    return filterByPeriod(list,period,customFrom,customTo);
+  },[txs,period,customFrom,customTo]);
+
+  const total=baseFiltered.reduce((s,t)=>s+Math.abs(t.amount),0);
   const catMap={};
-  for(const t of filtered){
-    const desc=(t.description+' '+(t.type||'')).toLowerCase();
-    let cat='Altro';
-    if(/amazon|shop|acquist|mercato|market|aliexpress|ebay|zalando|fashion/i.test(desc)) cat='Shopping';
-    else if(/restaurant|ristorante|pizz|sushi|burger|mcdonald|kfc|bar|caffe|food|deliveroo|glovo/i.test(desc)) cat='Cibo & Ristoranti';
-    else if(/netflix|spotify|apple|disney|prime|youtube|abbonamento|subscription/i.test(desc)) cat='Abbonamenti';
-    else if(/affitto|rent|appartamento|casa/i.test(desc)) cat='Affitto';
-    else if(/farmac|medic|doctor|hospital|health/i.test(desc)) cat='Salute';
-    else if(/atm|prelievo|cash|bancomat/i.test(desc)) cat='Contanti';
-    else if(/taxi|uber|bolt|treno|trenitalia|italo|flixbus|trasport|metro|bus/i.test(desc)) cat='Trasporti';
-    else if(/hotel|airbnb|booking|viaggio|vacanza|travel|ryanair|easyjet|flight/i.test(desc)) cat='Viaggi';
-    else if(/luce|gas|acqua|internet|tim|vodafone|iliad|wind|utility|bolletta/i.test(desc)) cat='Utenze';
-    else if(/transfer|bonifico|payment|sent/i.test(t.type?.toLowerCase()||'')) cat='Trasferimenti';
-    if(!catMap[cat]) catMap[cat]=0; catMap[cat]+=Math.abs(t.amount);
-  }
-  const cats=Object.entries(catMap).sort((a,b)=>b[1]-a[1]).map(([name,amount])=>({name,amount,pct:(amount/total)*100}));
+  for(const t of baseFiltered){ const c=categorizeTx(t); if(!catMap[c])catMap[c]=0; catMap[c]+=Math.abs(t.amount); }
+  const cats=Object.entries(catMap).sort((a,b)=>b[1]-a[1]).map(([name,amount])=>({name,amount,pct:total>0?(amount/total)*100:0}));
+
+  const displayTxs=useMemo(()=>activeCat?baseFiltered.filter(t=>categorizeTx(t)===activeCat):baseFiltered,[baseFiltered,activeCat]);
+
+  // Top merchants for current period
+  const merchantMap={};
+  for(const t of baseFiltered){ const k=t.description||'?'; if(!merchantMap[k])merchantMap[k]={name:k,total:0,count:0}; merchantMap[k].total+=Math.abs(t.amount); merchantMap[k].count++; }
+  const topMerchants=Object.values(merchantMap).sort((a,b)=>b.total-a.total).slice(0,8);
+
+  // Recurring for current period
+  const descCount={};
+  for(const t of baseFiltered){ const k=t.description; if(!descCount[k])descCount[k]={name:k,count:0,total:0}; descCount[k].count++; descCount[k].total+=Math.abs(t.amount); }
+  const recurring=Object.values(descCount).filter(d=>d.count>=2).sort((a,b)=>b.total-a.total).slice(0,8);
+
   const COLORS=[C.purple,C.cyan,C.orange,C.red,C.green,C.pink,C.yellow,C.teal];
   return (
-    <div className="rv-page" style={{padding:'0 16px 24px',display:'flex',flexDirection:'column',gap:16}}>
-      <SegCtrl C={C} options={[{id:'month',label:'Mese'},{id:'3m',label:'3 Mesi'},{id:'all',label:'Tutto'}]} value={period} onChange={setPeriod}/>
+    <div className="rv-page" style={{padding:'0 16px 24px',display:'flex',flexDirection:'column',gap:14}}>
+      <SegCtrl C={C} options={PERIOD_OPTS} value={period} onChange={v=>{setPeriod(v);setActiveCat(null);}}/>
+      {period==='custom'&&<CustomDatePicker C={C} from={customFrom} to={customTo} onChange={(f,t)=>{setCustomFrom(f);setCustomTo(t);setActiveCat(null);}}/>}
       <Glass C={C}><div style={{textAlign:'center',padding:'4px 0'}}>
-        <div style={{color:C.secondary,fontSize:12,fontFamily:FONT.text,fontWeight:500,marginBottom:6}}>Totale Spese</div>
-        <div style={{color:C.cyan,fontSize:42,fontFamily:FONT.display,fontWeight:700,letterSpacing:'-1.5px',fontVariantNumeric:'tabular-nums',...neonText(C.cyan,C.scheme)}}>{fmt.currency(total,cur)}</div>
-        <div style={{color:C.tertiary,fontSize:11,fontFamily:FONT.mono,marginTop:6}}>{filtered.length} transazioni</div>
+        <div style={{color:C.secondary,fontSize:12,fontFamily:FONT.text,fontWeight:500,marginBottom:6}}>
+          {activeCat?`Categoria: ${activeCat}`:'Totale Spese'}
+          {activeCat&&<button onClick={()=>setActiveCat(null)} style={{marginLeft:8,background:'none',border:'none',cursor:'pointer',color:C.tertiary,fontSize:11,fontFamily:FONT.text}}>× tutto</button>}
+        </div>
+        <div style={{color:C.cyan,fontSize:42,fontFamily:FONT.display,fontWeight:700,letterSpacing:'-1.5px',fontVariantNumeric:'tabular-nums',...neonText(C.cyan,C.scheme)}}>{fmt.currency(activeCat?displayTxs.reduce((s,t)=>s+Math.abs(t.amount),0):total,cur)}</div>
+        <div style={{color:C.tertiary,fontSize:11,fontFamily:FONT.mono,marginTop:6}}>{displayTxs.length} transazioni</div>
       </div></Glass>
       {cats.length>0&&(
         <Glass C={C}>
-          <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:14}}>Per Categoria</div>
-          {cats.slice(0,8).map((cat,i)=>(
-            <div key={cat.name} style={{marginBottom:i<cats.length-1?10:0}}>
+          <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:14}}>Per Categoria <span style={{color:C.tertiary,fontWeight:400,fontSize:10}}>{activeCat?'— tocca per resettare':'— tocca per filtrare'}</span></div>
+          {cats.slice(0,9).map((cat,i)=>(
+            <div key={cat.name} onClick={()=>setActiveCat(activeCat===cat.name?null:cat.name)} style={{marginBottom:i<cats.length-1?10:0,cursor:'pointer',opacity:activeCat&&activeCat!==cat.name?0.4:1,transition:'opacity 0.2s'}}>
               <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
-                <div style={{display:'flex',alignItems:'center',gap:7}}><div style={{width:8,height:8,borderRadius:2,background:COLORS[i%COLORS.length]}}/><span style={{color:C.primary,fontSize:13,fontFamily:FONT.text}}>{cat.name}</span></div>
+                <div style={{display:'flex',alignItems:'center',gap:7}}>
+                  <div style={{width:8,height:8,borderRadius:2,background:COLORS[i%COLORS.length]}}/>
+                  <span style={{color:C.primary,fontSize:13,fontFamily:FONT.text}}>{cat.name}</span>
+                </div>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
                   <span style={{color:C.tertiary,fontSize:11,fontFamily:FONT.mono}}>{fmt.pct(cat.pct)}</span>
                   <span style={{color:C.primary,fontSize:13,fontFamily:FONT.mono,fontWeight:600}}>{fmt.currency(cat.amount,cur)}</span>
@@ -1059,11 +1020,11 @@ function SpesePage({C,data,txs}) {
           ))}
         </Glass>
       )}
-      {data.topMerchants.length>0&&(
+      {topMerchants.length>0&&(
         <Glass C={C} padding="">
           <div style={{padding:'16px 18px 4px'}}><div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px'}}>Top Commercianti</div></div>
-          {data.topMerchants.slice(0,8).map((m,i)=>(
-            <div key={m.name} className="rv-row" style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 18px',borderBottom:i<7?`0.5px solid ${C.sep}`:'none'}}>
+          {topMerchants.map((m,i)=>(
+            <div key={m.name} className="rv-row" style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 18px',borderBottom:i<topMerchants.length-1?`0.5px solid ${C.sep}`:'none'}}>
               <div><div style={{color:C.primary,fontSize:13,fontFamily:FONT.text,fontWeight:500}}>{m.name}</div><div style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono,marginTop:2}}>{m.count}× transazioni</div></div>
               <span style={{color:C.red,fontSize:14,fontFamily:FONT.mono,fontWeight:600,fontVariantNumeric:'tabular-nums'}}>−{fmt.currency(m.total,cur)}</span>
             </div>
@@ -1071,11 +1032,11 @@ function SpesePage({C,data,txs}) {
           <div style={{height:4}}/>
         </Glass>
       )}
-      {data.recurring.length>0&&(
+      {recurring.length>0&&(
         <Glass C={C} padding="">
           <div style={{padding:'16px 18px 4px'}}><div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px'}}>Pagamenti Ricorrenti</div></div>
-          {data.recurring.map((r,i)=>(
-            <div key={r.name} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 18px',borderBottom:i<data.recurring.length-1?`0.5px solid ${C.sep}`:'none'}}>
+          {recurring.map((r,i)=>(
+            <div key={r.name} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 18px',borderBottom:i<recurring.length-1?`0.5px solid ${C.sep}`:'none'}}>
               <div><div style={{color:C.primary,fontSize:13,fontFamily:FONT.text}}>{r.name}</div><div style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono,marginTop:2}}>{r.count}× · media {fmt.currency(r.total/r.count,cur)}/volta</div></div>
               <div style={{padding:'3px 10px',background:`${C.orange}18`,border:`0.5px solid ${C.orange}40`,borderRadius:RADIUS.pill,fontSize:11,fontFamily:FONT.mono,fontWeight:600,color:C.orange}}>{fmt.currency(r.total,cur)}</div>
             </div>
@@ -1090,37 +1051,92 @@ function SpesePage({C,data,txs}) {
 /* ============= MOVIMENTI ============= */
 function MovimentiPage({C,txs}) {
   const [filter,setFilter]=useState('all');
+  const [period,setPeriod]=useState('all');
+  const [customFrom,setCustomFrom]=useState('');
+  const [customTo,setCustomTo]=useState('');
   const [search,setSearch]=useState('');
+  const [catFilter,setCatFilter]=useState('tutte');
   const [visible,setVisible]=useState(40);
   const cur=txs[0]?.currency||'EUR';
   const sorted=useMemo(()=>[...txs].sort((a,b)=>b.date-a.date),[txs]);
+
+  const allCats=useMemo(()=>{
+    const s=new Set(sorted.filter(t=>t.amount<0&&!t.internal).map(t=>categorizeTx(t)));
+    return ['tutte',...Array.from(s).sort()];
+  },[sorted]);
+
   const filtered=useMemo(()=>{
     let list=sorted;
-    if(filter==='in') list=list.filter(t=>t.amount>0);
-    if(filter==='out') list=list.filter(t=>t.amount<0);
-    if(search) list=list.filter(t=>t.description?.toLowerCase().includes(search.toLowerCase()));
+    list=filterByPeriod(list,period,customFrom,customTo);
+    if(filter==='in')  list=list.filter(t=>t.amount>0&&!t.internal);
+    if(filter==='out') list=list.filter(t=>t.amount<0&&!t.internal);
+    if(filter==='int') list=list.filter(t=>t.internal);
+    if(catFilter!=='tutte'&&filter!=='in') list=list.filter(t=>t.amount<0&&!t.internal&&categorizeTx(t)===catFilter);
+    if(search) list=list.filter(t=>(t.description||'').toLowerCase().includes(search.toLowerCase())||(t.type||'').toLowerCase().includes(search.toLowerCase()));
     return list;
-  },[sorted,filter,search]);
+  },[sorted,filter,period,customFrom,customTo,search,catFilter]);
+
+  // reset visible when filters change
+  const [prevFiltered, setPrevFiltered] = useState(filtered);
+  if (filtered !== prevFiltered) { setPrevFiltered(filtered); setVisible(40); }
+
+  const totalIn=filtered.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0);
+  const totalOut=filtered.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);
+
   return (
     <div className="rv-page" style={{padding:'0 16px 24px',display:'flex',flexDirection:'column',gap:12}}>
+      {/* Search */}
       <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:C.glass2,border:`0.5px solid ${C.sep}`,borderRadius:RADIUS.inset}}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke={C.tertiary} strokeWidth="2"/><path d="m21 21-4.35-4.35" stroke={C.tertiary} strokeWidth="2" strokeLinecap="round"/></svg>
         <input type="text" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Cerca transazione..." style={{flex:1,background:'transparent',border:'none',outline:'none',color:C.primary,fontSize:14,fontFamily:FONT.text}}/>
         {search&&<button onClick={()=>setSearch('')} style={{background:'none',border:'none',cursor:'pointer',color:C.tertiary,fontSize:18,lineHeight:1}}>×</button>}
       </div>
-      <SegCtrl C={C} options={[{id:'all',label:'Tutti'},{id:'in',label:'Entrate'},{id:'out',label:'Uscite'}]} value={filter} onChange={setFilter}/>
+      {/* Period filter */}
+      <SegCtrl C={C} options={PERIOD_OPTS} value={period} onChange={v=>{setPeriod(v);}} />
+      {period==='custom'&&<CustomDatePicker C={C} from={customFrom} to={customTo} onChange={(f,t)=>{setCustomFrom(f);setCustomTo(t);}}/>}
+      {/* Type filter */}
+      <SegCtrl C={C} options={[{id:'all',label:'Tutti'},{id:'in',label:'Entrate'},{id:'out',label:'Uscite'},{id:'int',label:'Interni'}]} value={filter} onChange={v=>{setFilter(v);setCatFilter('tutte');}}/>
+      {/* Category filter — only for uscite */}
+      {(filter==='all'||filter==='out')&&allCats.length>2&&(
+        <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:2,WebkitOverflowScrolling:'touch'}}>
+          {allCats.map(c=>(
+            <button key={c} onClick={()=>setCatFilter(c)} className="rv-btn" style={{
+              flexShrink:0,padding:'5px 12px',fontSize:11,fontFamily:FONT.text,fontWeight:600,
+              borderRadius:RADIUS.pill,border:`0.5px solid ${catFilter===c?C.purple:C.sep}`,
+              background:catFilter===c?`${C.purple}25`:C.glass2,
+              color:catFilter===c?C.purple:C.secondary,cursor:'pointer',whiteSpace:'nowrap',
+            }}>{c==='tutte'?'Tutte':c}</button>
+          ))}
+        </div>
+      )}
+      {/* Summary */}
+      {filtered.length>0&&(
+        <div style={{display:'flex',gap:8}}>
+          <div style={{flex:1,padding:'10px 14px',background:`${C.green}12`,border:`0.5px solid ${C.green}30`,borderRadius:RADIUS.inset}}>
+            <div style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono,marginBottom:3}}>ENTRATE</div>
+            <div style={{color:C.green,fontSize:15,fontFamily:FONT.mono,fontWeight:700,fontVariantNumeric:'tabular-nums'}}>+{fmt.currency(totalIn,cur)}</div>
+          </div>
+          <div style={{flex:1,padding:'10px 14px',background:`${C.red}12`,border:`0.5px solid ${C.red}30`,borderRadius:RADIUS.inset}}>
+            <div style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono,marginBottom:3}}>USCITE</div>
+            <div style={{color:C.red,fontSize:15,fontFamily:FONT.mono,fontWeight:700,fontVariantNumeric:'tabular-nums'}}>−{fmt.currency(totalOut,cur)}</div>
+          </div>
+        </div>
+      )}
+      {/* Transaction list */}
       <Glass C={C} padding="">
         <div style={{padding:'4px 0'}}>
           {filtered.slice(0,visible).map((t,i)=>{
             const isLast=i===Math.min(visible,filtered.length)-1;
-            const amtColor=t.amount>=0?C.green:C.red;
+            const amtColor=t.amount>=0?C.green:t.internal?C.tertiary:C.red;
+            const cat=t.amount<0&&!t.internal?categorizeTx(t):null;
             return (
-              <div key={i} className="rv-row" style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 18px',borderBottom:!isLast?`0.5px solid ${C.sep}`:'none'}}>
+              <div key={i} className="rv-row" style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 18px',borderBottom:!isLast?`0.5px solid ${C.sep}`:'none',opacity:t.internal?0.6:1}}>
                 <div style={{flex:1,marginRight:12}}>
                   <div style={{color:C.primary,fontSize:13,fontFamily:FONT.text,fontWeight:500,marginBottom:2}}>{t.description||t.type||'Transazione'}</div>
-                  <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                    <span style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono}}>{t.date?.toLocaleDateString('it-IT',{day:'2-digit',month:'short'})}</span>
+                  <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
+                    <span style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono}}>{t.date?.toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'2-digit'})}</span>
                     {t.type&&<span style={{fontSize:9,fontFamily:FONT.text,fontWeight:600,color:C.tertiary,padding:'1px 6px',background:C.glass3,borderRadius:RADIUS.pill,textTransform:'uppercase',letterSpacing:'0.3px'}}>{t.type}</span>}
+                    {cat&&<span style={{fontSize:9,fontFamily:FONT.text,fontWeight:600,color:C.purple,padding:'1px 6px',background:`${C.purple}18`,borderRadius:RADIUS.pill}}>{cat}</span>}
                   </div>
                 </div>
                 <div style={{textAlign:'right'}}>
@@ -1148,10 +1164,19 @@ function MovimentiPage({C,txs}) {
 const GEMINI_API_KEY = 'AIzaSyBHMzuLYtPUZxg-AahLWv0xkM9QCkzzRdk'; // placeholder — replace with real key
 
 function AIPage({C,data,txs,setInputFocused}) {
-  const [messages,setMessages]=useState([]);
+  const [isFocused,setIsFocused]=useState(false);
+  const CHAT_KEY='hb_chat_history';
+  const [messages,setMessages]=useState(()=>{
+    try{const s=localStorage.getItem(CHAT_KEY);return s?JSON.parse(s):[];}catch{return [];}
+  });
   const [input,setInput]=useState('');
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState(null);
+
+  // Persist chat to localStorage on every change
+  useEffect(()=>{
+    try{localStorage.setItem(CHAT_KEY,JSON.stringify(messages));}catch{}
+  },[messages]);
   const scrollRef=useRef(null);
   const inputRef=useRef(null);
   const cur=txs[0]?.currency||'EUR';
@@ -1168,9 +1193,9 @@ Dati finanziari:
 - Spesa giornaliera media: ${fmt.currency(data.avgDailySpend,cur)}
 - Commissioni pagate: ${fmt.currency(data.totalFees,cur)}
 - Totale transazioni: ${data.totalTxs}
-- Categorie di spesa: ${data.categories.slice(0,6).map(c=>`${c.name}: ${fmt.currency(c.amount,cur)}`).join(', ')}
-- Top commercianti: ${data.topMerchants.slice(0,5).map(m=>`${m.name} (${fmt.currency(m.total,cur)}, ${m.count}x)`).join(', ')}
-- Mesi analizzati: ${data.monthlyData.length}
+- Categorie di spesa: ${(data.categories||[]).slice(0,6).map(c=>`${c.name}: ${fmt.currency(c.amount,cur)}`).join(', ')}
+- Top commercianti: ${(data.topMerchants||[]).slice(0,5).map(m=>`${m.name} (${fmt.currency(m.total,cur)}, ${m.count}x)`).join(', ')}
+- Mesi analizzati: ${(data.monthlyData||[]).length}
 Rispondi sempre in italiano, in modo conciso e diretto. Non dare consigli operativi, descrivi i dati.`
   ,[data,cur]);
 
@@ -1210,7 +1235,7 @@ Rispondi sempre in italiano, in modo conciso e diretto. Non dare consigli operat
 
   const clearChat=()=>{
     if(messages.length===0) return;
-    if(window.confirm('Cancellare tutta la conversazione?')){haptic.medium();setMessages([]);setError(null);}
+    if(window.confirm('Cancellare tutta la conversazione?')){haptic.medium();setMessages([]);setError(null);try{localStorage.removeItem(CHAT_KEY);}catch{}}
   };
 
   const SUGG=['Analizza le mie spese principali','Come posso risparmiare di più?','Quali abbonamenti potrei tagliare?','Confronta entrate e uscite mensili'];
@@ -1264,15 +1289,15 @@ Rispondi sempre in italiano, in modo conciso e diretto. Non dare consigli operat
       </div>
 
       {/* Input bar */}
-      <div style={{flexShrink:0,padding:'4px 12px',paddingBottom:'calc(82px + env(safe-area-inset-bottom, 0px))',background:"inherit",borderTop:`0.5px solid ${C.sep}`}}>
+      <div style={{flexShrink:0,padding:'4px 12px',paddingBottom:isFocused?'8px':'calc(82px + env(safe-area-inset-bottom, 0px))',background:"inherit",borderTop:`0.5px solid ${C.sep}`,transition:'padding-bottom 0.25s ease'}}>
         <div style={{display:'flex',alignItems:'flex-end',gap:8,background:C.glass,backdropFilter:'blur(20px)',WebkitBackdropFilter:'blur(20px)',border:`0.5px solid ${C.sep2}`,borderRadius:24,padding:'6px 6px 6px 14px',marginBottom:6}}>
           <textarea
             ref={inputRef}
             value={input}
             onChange={e=>setInput(e.target.value)}
             onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}}
-            onFocus={()=>setInputFocused?.(true)}
-            onBlur={()=>setInputFocused?.(false)}
+            onFocus={()=>{setInputFocused?.(true);setIsFocused(true);}}
+            onBlur={()=>{setInputFocused?.(false);setIsFocused(false);}}
             placeholder="Chiedi qualcosa sui tuoi dati..."
             rows={1}
             style={{flex:1,background:'transparent',border:'none',outline:'none',color:C.primary,fontSize:16,fontFamily:FONT.text,resize:'none',padding:'8px 0',maxHeight:120,letterSpacing:'-0.1px',lineHeight:1.4}}
@@ -1288,25 +1313,68 @@ Rispondi sempre in italiano, in modo conciso e diretto. Non dare consigli operat
 
 /* ============= ANALYTICS ============= */
 function AnalyticsPage({C,data,txs}) {
+  const [period,setPeriod]=useState('all');
+  const [customFrom,setCustomFrom]=useState('');
+  const [customTo,setCustomTo]=useState('');
   const cur=txs[0]?.currency||'EUR';
+
+  const periodTxs=useMemo(()=>filterByPeriod(txs,period,customFrom,customTo),[txs,period,customFrom,customTo]);
+  const d=useMemo(()=>periodTxs.length?analyzeTransactions(periodTxs):null,[periodTxs]);
+  if(!d) return <div style={{padding:32,textAlign:'center',color:C.tertiary,fontSize:13,fontFamily:FONT.text}}>Nessun dato per il periodo selezionato</div>;
+
   const dowMap={0:'Dom',1:'Lun',2:'Mar',3:'Mer',4:'Gio',5:'Ven',6:'Sab'};
   const dowData=Array.from({length:7},(_,i)=>({name:dowMap[i],amount:0,count:0}));
-  for(const t of txs){if(t.amount>=0||!t.date) continue; const d=t.date.getDay(); dowData[d].amount+=Math.abs(t.amount); dowData[d].count++;}
+  for(const t of periodTxs){if(t.amount>=0||!t.date||t.internal) continue; const dw=t.date.getDay(); dowData[dw].amount+=Math.abs(t.amount); dowData[dw].count++;}
+  const maxDow=Math.max(...dowData.map(x=>x.amount));
+
+  // Monthly view: if period is <3m show weekly, else monthly
+  const showWeekly = period==='7d'||period==='month';
+  const chartData = showWeekly ? d.weeklyData : (d.monthlyData||[]).slice(-14);
+
   return (
     <div className="rv-page" style={{padding:'0 16px 24px',display:'flex',flexDirection:'column',gap:16}}>
-      <SectionTitle C={C}>Analisi</SectionTitle>
+      <SegCtrl C={C} options={PERIOD_OPTS} value={period} onChange={setPeriod}/>
+      {period==='custom'&&<CustomDatePicker C={C} from={customFrom} to={customTo} onChange={(f,t)=>{setCustomFrom(f);setCustomTo(t);}}/>}
+
+      {/* Income vs Expense chart */}
       <Glass C={C}>
-        <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:12}}>Flusso Settimanale (12 settimane)</div>
+        <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:12}}>
+          {showWeekly?'Flusso Settimanale':'Entrate vs Uscite Mensili'}
+        </div>
         <ResponsiveContainer width="100%" height={140}>
-          <LineChart data={data.weeklyData} margin={{left:-20,right:0,top:4,bottom:0}}>
+          <BarChart data={chartData} margin={{left:-20,right:0,top:4,bottom:0}}>
             <CartesianGrid strokeDasharray="3 3" stroke={C.sep} vertical={false}/>
-            <XAxis dataKey="label" tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false}/>
+            <XAxis dataKey={showWeekly?'label':'month'} tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={showWeekly?undefined:fmt.monthLabel}/>
             <YAxis tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={v=>fmt.short(v)}/>
-            <Line dataKey="income" stroke={C.green} strokeWidth={2} dot={false}/>
-            <Line dataKey="expense" stroke={C.red} strokeWidth={2} dot={false}/>
-          </LineChart>
+            <Bar dataKey="income" fill={C.green} radius={[3,3,0,0]} maxBarSize={18} opacity={0.85}/>
+            <Bar dataKey="expense" fill={C.red} radius={[3,3,0,0]} maxBarSize={18} opacity={0.85}/>
+          </BarChart>
         </ResponsiveContainer>
+        <div style={{display:'flex',gap:16,marginTop:4}}>
+          <div style={{display:'flex',alignItems:'center',gap:5}}><div style={{width:8,height:8,borderRadius:2,background:C.green}}/><span style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono}}>Entrate</span></div>
+          <div style={{display:'flex',alignItems:'center',gap:5}}><div style={{width:8,height:8,borderRadius:2,background:C.red}}/><span style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono}}>Uscite</span></div>
+        </div>
       </Glass>
+
+      {/* Saving rate */}
+      {!showWeekly&&(d.monthlyData||[]).length>1&&(
+        <Glass C={C}>
+          <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:12}}>Saving Rate Mensile</div>
+          <ResponsiveContainer width="100%" height={120}>
+            <BarChart data={(d.monthlyData||[]).slice(-14).map(m=>({...m,sr:m.income>0?((m.income-m.expense)/m.income)*100:0}))} margin={{left:-10,right:0,top:4,bottom:0}}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.sep} vertical={false}/>
+              <XAxis dataKey="month" tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={fmt.monthLabel}/>
+              <YAxis tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={v=>`${v.toFixed(0)}%`}/>
+              <ReferenceLine y={0} stroke={C.sep2}/>
+              <Bar dataKey="sr" radius={[4,4,0,0]} maxBarSize={24}>
+                {(d.monthlyData||[]).slice(-14).map((m,i)=>{const sr=m.income>0?((m.income-m.expense)/m.income)*100:0;return <Cell key={i} fill={sr>=0?C.green:C.red} opacity={0.85}/>;}) }
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </Glass>
+      )}
+
+      {/* Day of week */}
       <Glass C={C}>
         <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:12}}>Spese per Giorno della Settimana</div>
         <ResponsiveContainer width="100%" height={120}>
@@ -1315,39 +1383,29 @@ function AnalyticsPage({C,data,txs}) {
             <XAxis dataKey="name" tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false}/>
             <YAxis tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={v=>fmt.short(v)}/>
             <Bar dataKey="amount" radius={[4,4,0,0]} maxBarSize={24}>
-              {dowData.map((d,i)=><Cell key={i} fill={d.amount===Math.max(...dowData.map(x=>x.amount))?C.orange:C.purple} opacity={0.85}/>)}
+              {dowData.map((dw,i)=><Cell key={i} fill={dw.amount===maxDow?C.orange:C.purple} opacity={0.85}/>)}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
       </Glass>
-      <Glass C={C}>
-        <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:12}}>Saving Rate Mensile</div>
-        <ResponsiveContainer width="100%" height={120}>
-          <BarChart data={data.monthlyData.slice(-12).map(m=>({...m,sr:m.income>0?((m.income-m.expense)/m.income)*100:0}))} margin={{left:-10,right:0,top:4,bottom:0}}>
-            <CartesianGrid strokeDasharray="3 3" stroke={C.sep} vertical={false}/>
-            <XAxis dataKey="month" tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={fmt.monthLabel}/>
-            <YAxis tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={v=>`${v.toFixed(0)}%`}/>
-            <ReferenceLine y={0} stroke={C.sep2}/>
-            <Bar dataKey="sr" radius={[4,4,0,0]} maxBarSize={24}>
-              {data.monthlyData.slice(-12).map((m,i)=>{const sr=m.income>0?((m.income-m.expense)/m.income)*100:0;return <Cell key={i} fill={sr>=0?C.green:C.red} opacity={0.85}/>;}) }
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </Glass>
-      <Glass C={C} padding="">
-        <div style={{padding:'14px 18px 4px'}}><div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px'}}>Dettaglio Mensile</div></div>
-        {data.monthlyData.slice().reverse().slice(0,12).map((m,i)=>{const net=m.income-m.expense;const nc=net>=0?C.green:C.red;return(
-          <div key={m.month} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 18px',borderBottom:`0.5px solid ${C.sep}`}}>
-            <span style={{color:C.primary,fontSize:13,fontFamily:FONT.mono,fontWeight:500,width:60}}>{fmt.monthLabel(m.month)}</span>
-            <div style={{display:'flex',gap:12,alignItems:'center'}}>
-              <span style={{color:C.green,fontSize:11,fontFamily:FONT.mono,fontVariantNumeric:'tabular-nums'}}>+{fmt.short(m.income)}</span>
-              <span style={{color:C.red,fontSize:11,fontFamily:FONT.mono,fontVariantNumeric:'tabular-nums'}}>−{fmt.short(m.expense)}</span>
-              <span style={{color:nc,fontSize:12,fontFamily:FONT.mono,fontWeight:700,fontVariantNumeric:'tabular-nums',minWidth:52,textAlign:'right',...neonText(nc,C.scheme)}}>{net>=0?'+':''}{fmt.short(net)}</span>
+
+      {/* Monthly detail table */}
+      {!showWeekly&&(d.monthlyData||[]).length>0&&(
+        <Glass C={C} padding="">
+          <div style={{padding:'14px 18px 4px'}}><div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px'}}>Dettaglio Mensile</div></div>
+          {(d.monthlyData||[]).slice().reverse().map((m,i)=>{const net=m.income-m.expense;const nc=net>=0?C.green:C.red;return(
+            <div key={m.month} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 18px',borderBottom:i<(d.monthlyData.length-1)?`0.5px solid ${C.sep}`:'none'}}>
+              <span style={{color:C.primary,fontSize:13,fontFamily:FONT.mono,fontWeight:500,width:60}}>{fmt.monthLabel(m.month)}</span>
+              <div style={{display:'flex',gap:12,alignItems:'center'}}>
+                <span style={{color:C.green,fontSize:11,fontFamily:FONT.mono,fontVariantNumeric:'tabular-nums'}}>+{fmt.short(m.income)}</span>
+                <span style={{color:C.red,fontSize:11,fontFamily:FONT.mono,fontVariantNumeric:'tabular-nums'}}>−{fmt.short(m.expense)}</span>
+                <span style={{color:nc,fontSize:12,fontFamily:FONT.mono,fontWeight:700,fontVariantNumeric:'tabular-nums',minWidth:52,textAlign:'right',...neonText(nc,C.scheme)}}>{net>=0?'+':''}{fmt.short(net)}</span>
+              </div>
             </div>
-          </div>
-        );})}
-        <div style={{height:4}}/>
-      </Glass>
+          );})}
+          <div style={{height:4}}/>
+        </Glass>
+      )}
     </div>
   );
 }
@@ -2152,7 +2210,8 @@ function AccountPill({C,accounts,activeAccountId,setActiveAccountId}) {
       <button onClick={()=>{setOpen(o=>!o);haptic.selection();}} className="rv-btn" style={{
         display:'flex',alignItems:'center',gap:6,padding:'5px 10px',
         background:C.glass2,border:`0.5px solid ${C.sep2}`,borderRadius:RADIUS.pill,
-        cursor:'pointer',
+        cursor:'pointer',WebkitTapHighlightColor:'transparent',touchAction:'manipulation',
+        userSelect:'none',WebkitUserSelect:'none',
       }}>
         <div style={{width:8,height:8,borderRadius:4,background:current.color,boxShadow:`0 0 6px ${current.color}80`}}/>
         <span style={{color:C.primary,fontSize:12,fontFamily:FONT.text,fontWeight:600,maxWidth:110,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{current.name}</span>
@@ -2291,8 +2350,8 @@ export default function App() {
 
       {/* HEADER — identico a XAUTrader: overflow:hidden, transform translateY(-6px) */}
       <header style={{position:'sticky',zIndex:30,overflow:'hidden',
-        top: 0,
-        transform: 'translateY(-6px)',
+        top: -6,
+        marginBottom: -6,
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
