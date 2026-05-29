@@ -2361,8 +2361,8 @@ export default function App() {
 
       {/* HEADER — identico a XAUTrader: overflow:hidden, transform translateY(-6px) */}
       <header style={{position:'sticky',zIndex:30,
-        top: -6,
-        marginBottom: -6,
+        top: 0,
+        transform: 'translateY(-6px)',
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
@@ -2396,8 +2396,8 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingBottom:0}}>
-        <div style={{paddingBottom:'calc(96px + env(safe-area-inset-bottom, 0px))', paddingTop:12}}>
+        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingBottom:'env(safe-area-inset-bottom, 0px)'}}>
+        <div style={{paddingBottom:70, paddingTop:12}}>
             {currentTab==='overview'  &&<OverviewPage   C={C} data={data} txs={activeTxs}/>}
             {currentTab==='spese'     &&<SpesePage      C={C} data={data} txs={activeTxs}/>}
             {currentTab==='movimenti' &&<MovimentiPage  C={C} txs={activeTxs}/>}
