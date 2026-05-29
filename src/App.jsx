@@ -2197,8 +2197,6 @@ function SettingsModal({C,open,onClose,schemeOverride,setSchemeOverride,accounts
 /* ============= ACCOUNT SELECTOR (header pill) ============= */
 function AccountPill({C,accounts,activeAccountId,setActiveAccountId}) {
   const [open,setOpen]=useState(false);
-  const [dropPos,setDropPos]=useState({top:60,right:12});
-  const btnRef=useRef();
   const ALL_ID='__all__';
   const options=[
     ...(accounts.length>1?[{id:ALL_ID,name:'Tutti i conti',color:C.purple}]:[]),
@@ -2207,18 +2205,9 @@ function AccountPill({C,accounts,activeAccountId,setActiveAccountId}) {
   const current=options.find(a=>a.id===activeAccountId)||options[0];
   if(!current) return null;
 
-  const handleOpen=()=>{
-    if(btnRef.current){
-      const r=btnRef.current.getBoundingClientRect();
-      setDropPos({top:r.bottom+6, right:window.innerWidth-r.right});
-    }
-    setOpen(o=>!o);
-    haptic.selection();
-  };
-
   return (
     <div style={{position:'relative'}}>
-      <button ref={btnRef} onClick={handleOpen} className="rv-btn" style={{
+      <button onClick={()=>{setOpen(o=>!o);haptic.selection();}} className="rv-btn" style={{
         display:'flex',alignItems:'center',gap:6,padding:'5px 10px',
         background:C.glass2,border:`0.5px solid ${C.sep2}`,borderRadius:RADIUS.pill,
         cursor:'pointer',WebkitTapHighlightColor:'transparent',touchAction:'manipulation',
@@ -2230,17 +2219,17 @@ function AccountPill({C,accounts,activeAccountId,setActiveAccountId}) {
       </button>
       {open&&(
         <>
-          <div onClick={()=>setOpen(false)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:998}}/>
+          <div onClick={()=>setOpen(false)} style={{position:'fixed',inset:0,zIndex:998}}/>
           <div className="rv-card" style={{
-            position:'fixed',top:dropPos.top,right:dropPos.right,minWidth:190,zIndex:9999,
-            background:C.glassBar,backdropFilter:'blur(40px)',WebkitBackdropFilter:'blur(40px)',
+            position:'fixed',top:60,right:12,minWidth:190,zIndex:9999,
+            background:C.glass,backdropFilter:'blur(40px)',WebkitBackdropFilter:'blur(40px)',
             border:`0.5px solid ${C.sep2}`,borderRadius:18,overflow:'hidden',
-            boxShadow:'0 8px 32px rgba(0,0,0,0.55)',
+            boxShadow:'0 8px 32px rgba(0,0,0,0.35)',
           }}>
           {options.map((a,i)=>(
             <div key={a.id} className="rv-row" onClick={()=>{setActiveAccountId(a.id);setOpen(false);haptic.light();}} style={{
-              display:'flex',alignItems:'center',gap:8,padding:'12px 16px',
-              background:activeAccountId===a.id?`${a.color}18`:'transparent',
+              display:'flex',alignItems:'center',gap:8,padding:'10px 14px',
+              background:activeAccountId===a.id?`${a.color}14`:'transparent',
               borderBottom:i<options.length-1?`0.5px solid ${C.sep}`:'none',
               cursor:'pointer',
             }}>
@@ -2249,7 +2238,7 @@ function AccountPill({C,accounts,activeAccountId,setActiveAccountId}) {
               {activeAccountId===a.id&&<div style={{marginLeft:'auto',width:5,height:5,borderRadius:3,background:a.color}}/>}
             </div>
           ))}
-          </div>
+        </div>
         </>
       )}
     </div>
@@ -2360,7 +2349,7 @@ export default function App() {
       />
 
       {/* HEADER — identico a XAUTrader: overflow:hidden, transform translateY(-6px) */}
-      <header style={{position:'sticky',zIndex:30,
+      <header style={{position:'sticky',zIndex:30,overflow:'hidden',
         top: -6,
         marginBottom: -6,
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
