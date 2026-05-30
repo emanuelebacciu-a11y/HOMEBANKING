@@ -2518,7 +2518,7 @@ export default function App() {
     const isStandalone =
       ('standalone' in navigator && navigator.standalone === true) ||
       window.matchMedia('(display-mode: standalone)').matches;
-    return isStandalone ? screen.height : window.innerHeight;
+    return isStandalone ? window.screen.height : window.innerHeight;
   };
   const [appHeight, setAppHeight] = useState(() => getH());
   useEffect(() => {
@@ -2598,8 +2598,8 @@ export default function App() {
     <div style={{
       background:C.bg, color:C.primary, fontFamily:FONT.text,
       WebkitFontSmoothing:'antialiased', MozOsxFontSmoothing:'grayscale',
-      position:'fixed', top:0, left:0, right:0, bottom:0,
-      height: appHeight,
+      position:'fixed', top:0, left:0, right:0,
+      height: 'var(--app-height, 100dvh)',
       display:'flex', flexDirection:'column',
     }}>
       <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,pointerEvents:'none',background:C.ambient}}/>
