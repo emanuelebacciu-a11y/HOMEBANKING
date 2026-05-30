@@ -2612,18 +2612,17 @@ export default function App() {
         onLoadForAccount={onLoadForAccount}
       />
 
-      {/* HEADER — identico a XAUTrader: overflow:hidden, transform translateY(-6px) */}
+      {/* HEADER: blur esteso fino al notch, contenuto sotto il notch */}
       <header style={{position:'sticky',zIndex:30,
         top: 0,
-        marginBottom: -27,
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
         borderBottom: `0.5px solid ${C.sep}`,
-        paddingTop: 0,
+        paddingTop: 'env(safe-area-inset-top, 0px)',
       }}>
         <div className="rv-shimmer-overlay" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:scheme==='dark'?1:0.4}}/>
-        <div style={{maxWidth:'100%',margin:'0 auto',padding:'0px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,position:'relative',minHeight:28}}>
+        <div style={{maxWidth:'100%',margin:'0 auto',padding:'1px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,position:'relative',minHeight:29}}>
           <span style={{fontFamily:FONT.text,fontSize:13,fontWeight:600,color:C.primary,letterSpacing:'-0.2px',flexShrink:0,marginRight:8}}>{activeAccountId==='__all__'?'Tutti i conti':activeAcc?.name||'HomeBanking'}</span>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
             {accounts.length>0&&<AccountPill C={C} accounts={accounts} activeAccountId={activeAccountId} setActiveAccountId={setActiveAccountId}/>}
