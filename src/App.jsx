@@ -2510,6 +2510,29 @@ function AccountPill({C,accounts,activeAccountId,setActiveAccountId}) {
 }
 
 /* ============= MAIN APP ============= */
+function DebugInfo({appHeight}) {
+  const safeTop = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sat') || '0');
+  const safeBot = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sab') || '0');
+  // misura safe area tramite div temporaneo
+  const [sab, setSab] = React.useState(0);
+  const [sat, setSat] = React.useState(0);
+  React.useEffect(() => {
+    const d = document.createElement('div');
+    d.style.cssText = 'position:fixed;bottom:0;left:0;width:1px;height:env(safe-area-inset-bottom,0px);pointer-events:none;';
+    document.body.appendChild(d);
+    setSab(d.offsetHeight);
+    d.style.height = 'env(safe-area-inset-top,0px)';
+    setSat(d.offsetHeight);
+    document.body.removeChild(d);
+  }, []);
+  const standalone = ('standalone' in navigator && navigator.standalone) || window.matchMedia('(display-mode:standalone)').matches;
+  return (
+    <div>
+      screen.h={screen.height} | innerH={window.innerHeight} | appH={appHeight} | SAT={sat} | SAB={sab} | SA={String(standalone)}
+    </div>
+  );
+}
+
 export default function App() {
   useEffect(()=>{injectCSS();injectPressManager();injectPWAMeta();},[]);
 
@@ -2664,6 +2687,16 @@ export default function App() {
         transition: 'transform 0.28s cubic-bezier(0.34, 1.18, 0.64, 1), opacity 0.22s ease-out',
       }}>
         <TabBar C={C} tabIdx={tabIdx} onTabTap={handleTabTap} scheme={scheme}/>
+      </div>
+
+      {/* DEBUG OVERLAY — rimuovere dopo il fix */}
+      <div style={{
+        position:'fixed', bottom:0, left:0, right:0, zIndex:9999,
+        background:'rgba(255,0,0,0.85)', color:'#fff',
+        fontSize:10, fontFamily:'monospace', padding:'4px 8px',
+        lineHeight:1.6,
+      }}>
+        <DebugInfo appHeight={appHeight}/>
       </div>
     </div>
   );
