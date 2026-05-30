@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, ResponsiveContainer, ReferenceLine, AreaChart, Area } from 'recharts';
 
 /* ============= GLOBAL STYLES ============= */
@@ -2481,7 +2482,7 @@ function AccountPill({C,accounts,activeAccountId,setActiveAccountId}) {
         <span style={{color:C.primary,fontSize:12,fontFamily:FONT.text,fontWeight:600,maxWidth:110,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{current.name}</span>
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d={open?"M18 15l-6-6-6 6":"M6 9l6 6 6-6"} stroke={C.tertiary} strokeWidth="2.5" strokeLinecap="round"/></svg>
       </button>
-      {open&&(
+      {open&&createPortal(
         <>
           <div onClick={()=>setOpen(false)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,zIndex:998}}/>
           <div className="rv-card" style={{
@@ -2503,7 +2504,8 @@ function AccountPill({C,accounts,activeAccountId,setActiveAccountId}) {
             </div>
           ))}
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );
