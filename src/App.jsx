@@ -2514,7 +2514,7 @@ export default function App() {
   useEffect(()=>{injectCSS();injectPressManager();injectPWAMeta();},[]);
 
   // ── Altezza reale — identico a XAUTrader ──────────────────────────────────
-  const getH = () => window.screen.height;
+  const getH = () => window.screen.height / window.devicePixelRatio;
   const [appHeight, setAppHeight] = useState(() => getH());
   useEffect(() => {
     const update = () => setAppHeight(getH());
