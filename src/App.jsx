@@ -2614,9 +2614,9 @@ export default function App() {
 
       {/* HEADER — sfondo esteso fino al bordo fisico sopra il notch */}
       <header style={{position:'sticky',zIndex:30,
-        top: -60,
-        marginBottom: -60,
-        paddingTop: 60,
+        top: -54,
+        marginBottom: -54,
+        paddingTop: 54,
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
