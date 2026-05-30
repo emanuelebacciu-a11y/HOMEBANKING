@@ -2620,7 +2620,7 @@ export default function App() {
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
         borderBottom: `0.5px solid ${C.sep}`,
-        paddingTop: 62,
+        paddingTop: 'env(safe-area-inset-top, 54px)',
       }}>
         <div className="rv-shimmer-overlay" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:scheme==='dark'?1:0.4}}/>
         <div style={{maxWidth:'100%',margin:'0 auto',padding:'4px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,position:'relative',minHeight:44}}>
