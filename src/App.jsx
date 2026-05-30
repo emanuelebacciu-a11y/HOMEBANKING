@@ -2594,7 +2594,7 @@ export default function App() {
       background:C.bg, color:C.primary, fontFamily:FONT.text,
       WebkitFontSmoothing:'antialiased', MozOsxFontSmoothing:'grayscale',
       position:'fixed', top:0, left:0, right:0,
-      height: appHeight,
+      height: screen.height + 40,
       display:'flex', flexDirection:'column',
     }}>
       <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,pointerEvents:'none',background:C.ambient}}/>
@@ -2645,7 +2645,7 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingBottom:'env(safe-area-inset-bottom, 0px)',marginBottom:'-57px'}}>
+        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingBottom:'env(safe-area-inset-bottom, 0px)'}}>
         <div style={{paddingBottom:'calc(96px)', paddingTop:12}}>
             {currentTab==='overview'  &&<OverviewPage   C={C} data={data} txs={activeTxs}/>}
             {currentTab==='spese'     &&<SpesePage      C={C} data={data} txs={activeTxs}/>}
