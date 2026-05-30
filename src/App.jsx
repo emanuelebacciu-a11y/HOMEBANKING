@@ -2514,12 +2514,7 @@ export default function App() {
   useEffect(()=>{injectCSS();injectPressManager();injectPWAMeta();},[]);
 
   // ── Altezza reale — identico a XAUTrader ──────────────────────────────────
-  const getH = () => {
-    const isStandalone =
-      ('standalone' in navigator && navigator.standalone === true) ||
-      window.matchMedia('(display-mode: standalone)').matches;
-    return isStandalone ? window.screen.height : window.innerHeight;
-  };
+  const getH = () => window.screen.height;
   const [appHeight, setAppHeight] = useState(() => getH());
   useEffect(() => {
     const update = () => setAppHeight(getH());
@@ -2599,6 +2594,7 @@ export default function App() {
       background:C.bg, color:C.primary, fontFamily:FONT.text,
       WebkitFontSmoothing:'antialiased', MozOsxFontSmoothing:'grayscale',
       position:'fixed', top:0, left:0, right:0, bottom:0,
+      height: appHeight,
       display:'flex', flexDirection:'column',
     }}>
       <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,pointerEvents:'none',background:C.ambient}}/>
@@ -2611,14 +2607,15 @@ export default function App() {
         onLoadForAccount={onLoadForAccount}
       />
 
-      {/* HEADER — sticky, paddingTop copre Dynamic Island */}
+      {/* HEADER — identico a XAUTrader: overflow:hidden, transform translateY(-6px) */}
       <header style={{position:'sticky',zIndex:30,
-        top: 0,
-        paddingTop: 62,
-        background: scheme==='dark'?'rgba(0,0,0,0.72)':'rgba(255,255,255,0.72)',
+        top: -12,
+        marginBottom: -12,
+        background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
         borderBottom: `0.5px solid ${C.sep}`,
+        paddingTop: 'env(safe-area-inset-top, 0px)',
       }}>
         <div className="rv-shimmer-overlay" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:scheme==='dark'?1:0.4}}/>
         <div style={{maxWidth:'100%',margin:'0 auto',padding:'4px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,position:'relative',minHeight:44}}>
@@ -2637,7 +2634,7 @@ export default function App() {
 
       {/* PAGER — identico a XAUTrader: AI separato, scroll wrapper con safe-area */}
       {showUpload ? (
-        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingTop:0}}>
+        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none'}}>
           <UploadScreen C={C} accountName={activeAcc?.name||'Conto'} onLoad={(txs)=>onLoadForAccount(activeAccountId,txs)}/>
         </div>
       ) : currentTab==='ai' ? (
@@ -2647,7 +2644,7 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingBottom:0,paddingTop:0}}>
+        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingBottom:0}}>
         <div style={{paddingBottom:'calc(96px + env(safe-area-inset-bottom, 0px))', paddingTop:12}}>
             {currentTab==='overview'  &&<OverviewPage   C={C} data={data} txs={activeTxs}/>}
             {currentTab==='spese'     &&<SpesePage      C={C} data={data} txs={activeTxs}/>}
