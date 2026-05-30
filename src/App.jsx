@@ -2615,12 +2615,12 @@ export default function App() {
       {/* HEADER — identico a XAUTrader: overflow:hidden, transform translateY(-6px) */}
       <header style={{position:'sticky',zIndex:30,
         top: 0,
-        marginBottom: -26,
+        marginBottom: -27,
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
         borderBottom: `0.5px solid ${C.sep}`,
-        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingTop: 0,
       }}>
         <div className="rv-shimmer-overlay" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:scheme==='dark'?1:0.4}}/>
         <div style={{maxWidth:'100%',margin:'0 auto',padding:'0px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,position:'relative',minHeight:28}}>
