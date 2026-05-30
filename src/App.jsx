@@ -2599,7 +2599,6 @@ export default function App() {
       background:C.bg, color:C.primary, fontFamily:FONT.text,
       WebkitFontSmoothing:'antialiased', MozOsxFontSmoothing:'grayscale',
       position:'fixed', top:0, left:0, right:0, bottom:0,
-      height: appHeight,
       display:'flex', flexDirection:'column',
     }}>
       <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,pointerEvents:'none',background:C.ambient}}/>
@@ -2612,10 +2611,10 @@ export default function App() {
         onLoadForAccount={onLoadForAccount}
       />
 
-      {/* HEADER — fixed, copre notch + status bar */}
-      <header style={{position:'fixed',zIndex:30,
-        top: 0, left: 0, right: 0,
-        paddingTop: 54,
+      {/* HEADER — sticky, paddingTop copre Dynamic Island */}
+      <header style={{position:'sticky',zIndex:30,
+        top: 0,
+        paddingTop: 62,
         background: scheme==='dark'?'rgba(0,0,0,0.72)':'rgba(255,255,255,0.72)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
@@ -2638,7 +2637,7 @@ export default function App() {
 
       {/* PAGER — identico a XAUTrader: AI separato, scroll wrapper con safe-area */}
       {showUpload ? (
-        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingTop:106}}>
+        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingTop:0}}>
           <UploadScreen C={C} accountName={activeAcc?.name||'Conto'} onLoad={(txs)=>onLoadForAccount(activeAccountId,txs)}/>
         </div>
       ) : currentTab==='ai' ? (
@@ -2648,7 +2647,7 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingBottom:0,paddingTop:106}}>
+        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingBottom:0,paddingTop:0}}>
         <div style={{paddingBottom:'calc(96px + env(safe-area-inset-bottom, 0px))', paddingTop:12}}>
             {currentTab==='overview'  &&<OverviewPage   C={C} data={data} txs={activeTxs}/>}
             {currentTab==='spese'     &&<SpesePage      C={C} data={data} txs={activeTxs}/>}
