@@ -2514,7 +2514,12 @@ export default function App() {
   useEffect(()=>{injectCSS();injectPressManager();injectPWAMeta();},[]);
 
   // ── Altezza reale — identico a XAUTrader ──────────────────────────────────
-  const getH = () => window.screen.height / window.devicePixelRatio;
+  const getH = () => {
+    const isStandalone =
+      ('standalone' in navigator && navigator.standalone === true) ||
+      window.matchMedia('(display-mode: standalone)').matches;
+    return isStandalone ? screen.height : window.innerHeight;
+  };
   const [appHeight, setAppHeight] = useState(() => getH());
   useEffect(() => {
     const update = () => setAppHeight(getH());
@@ -2607,15 +2612,15 @@ export default function App() {
         onLoadForAccount={onLoadForAccount}
       />
 
-      {/* HEADER — identico a XAUTrader: overflow:hidden, transform translateY(-6px) */}
+      {/* HEADER — come XAUTrader: translateY(-6px) + black-translucent */}
       <header style={{position:'sticky',zIndex:30,
-        top: -62,
-        marginBottom: -62,
+        top: 0,
+        transform: 'translateY(-6px)',
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
         borderBottom: `0.5px solid ${C.sep}`,
-        paddingTop: 'env(safe-area-inset-top, 54px)',
+        paddingTop: 'env(safe-area-inset-top, 0px)',
       }}>
         <div className="rv-shimmer-overlay" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:scheme==='dark'?1:0.4}}/>
         <div style={{maxWidth:'100%',margin:'0 auto',padding:'4px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,position:'relative',minHeight:44}}>
