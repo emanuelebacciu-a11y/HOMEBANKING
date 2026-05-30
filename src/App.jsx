@@ -2514,12 +2514,7 @@ export default function App() {
   useEffect(()=>{injectCSS();injectPressManager();injectPWAMeta();},[]);
 
   // ── Altezza reale — identico a XAUTrader ──────────────────────────────────
-  const getH = () => {
-    const isStandalone =
-      ('standalone' in navigator && navigator.standalone === true) ||
-      window.matchMedia('(display-mode: standalone)').matches;
-    return isStandalone ? window.screen.height : window.innerHeight;
-  };
+  const getH = () => window.screen.height;
   const [appHeight, setAppHeight] = useState(() => getH());
   useEffect(() => {
     const update = () => setAppHeight(getH());
