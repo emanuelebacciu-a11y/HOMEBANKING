@@ -292,7 +292,7 @@ function parseRevolutCSV(text) {
 
   // Internal Revolut pocket transfers — excluded from income/expense totals
   // (crypto pocket moves, invest pocket transfers, FX conversions between pockets)
-  const INTERNAL_TIPOS = new Set(['cambia valuta', 'addebita']);
+  const INTERNAL_TIPOS = new Set(['cambia valuta', 'addebita', 'exchange']);
   const INTERNAL_DESCS = new Set([
     'transfer to revolut digital assets europe ltd',
     'transfer from revolut digital assets europe ltd',
@@ -303,6 +303,31 @@ function parseRevolutCSV(text) {
            INTERNAL_DESCS.has((desc||'').toLowerCase().trim());
   };
 
+  // Smart number parser: handles both Italian (1.234,56) and English (1,234.56) formats
+  const parseSmartNum = (s) => {
+    if (!s) return NaN;
+    s = (s||'').replace(/[^\d.,-]/g, '').trim();
+    if (!s) return NaN;
+    const neg = s.startsWith('-');
+    const abs = s.replace(/^-/, '');
+    let val;
+    // Italian: ends with ,XX (1-2 decimal digits) → thousands sep is dot
+    if (/^\d{1,3}(\.\d{3})+(,\d{1,2})?$/.test(abs)) {
+      val = parseFloat(abs.replace(/\./g, '').replace(',', '.'));
+    // English: ends with .XX (1-2 decimal digits) → thousands sep is comma
+    } else if (/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(abs)) {
+      val = parseFloat(abs.replace(/,/g, ''));
+    // Italian decimal only: 25,30
+    } else if (/^\d+,\d{1,2}$/.test(abs)) {
+      val = parseFloat(abs.replace(',', '.'));
+    } else {
+      val = parseFloat(abs);
+    }
+    return isNaN(val) ? NaN : (neg ? -val : val);
+  };
+  const parseNum = s => parseSmartNum(s) || 0;
+  const parseNumNull = s => { const v = parseSmartNum(s); return isNaN(v) ? null : v; };
+
   const txs = [];
   for (let i=1;i<lines.length;i++) {
     const row = parseRow(lines[i]);
@@ -311,8 +336,6 @@ function parseRevolutCSV(text) {
     const state = get('state').toLowerCase();
     // Accept COMPLETATO (Italian) or COMPLETED (English); skip cancelled/pending
     if (state && !state.includes('complet')) continue;
-    const parseNum = s => parseFloat((s||'').replace(/[^\d.,-]/g,'').replace(',','.')) || 0;
-    const parseNumNull = s => { const v=parseFloat((s||'').replace(/[^\d.,-]/g,'').replace(',','.')); return isNaN(v)?null:v; };
     const amt  = parseNum(get('amount'));
     const fee  = parseNum(get('fee'));
     const bal  = parseNumNull(get('balance'));
@@ -443,31 +466,40 @@ function parseRevolutLines(lines) {
     return null;
   };
 
+  // SUM all "Totale" rows found — Revolut PDFs split by period/section,
+  // each with its own Totale. We need the grand total across all sections.
+  let totalExpense = 0, totalIncome = 0, foundAny = false;
   for (let li = 0; li < lines.length; li++) {
     const line = lines[li];
-    // Primary: "Totale" row - most reliable
     if (/^totale\b/i.test(line.trim())) {
       const result = tryExtractSummary(li, 4);
       if (result && result.expense > 0 && result.income > 0) {
-        summaryExpense = result.expense;
-        summaryIncome  = result.income;
-        break;
+        totalExpense += result.expense;
+        totalIncome  += result.income;
+        foundAny = true;
       }
     }
   }
+  if (foundAny) {
+    summaryExpense = Math.round(totalExpense * 100) / 100;
+    summaryIncome  = Math.round(totalIncome  * 100) / 100;
+  }
 
-  // Fallback: "Conto (conto corrente)" row
+  // Fallback: sum all conto corrente rows
   if (summaryIncome === null) {
     for (let li = 0; li < lines.length; li++) {
       const line = lines[li];
       if (/conto corrente/i.test(line)) {
         const result = tryExtractSummary(li, 4);
         if (result && result.expense > 0 && result.income > 0) {
-          summaryExpense = result.expense;
-          summaryIncome  = result.income;
-          break;
+          summaryExpense = (summaryExpense || 0) + result.expense;
+          summaryIncome  = (summaryIncome  || 0) + result.income;
         }
       }
+    }
+    if (summaryExpense !== null) {
+      summaryExpense = Math.round(summaryExpense * 100) / 100;
+      summaryIncome  = Math.round(summaryIncome  * 100) / 100;
     }
   }
 
@@ -699,36 +731,30 @@ function analyzeTransactions(txs) {
     income  = txs._summaryIncome;
     expense = txs._summaryExpense;
   } else {
-    // CSV: amounts already carry the correct sign from Revolut — sum directly.
-    // Exclude internal pocket transfers (crypto moves, invest pocket, FX conversions)
-    // which inflate both sides without representing real cash flow.
+    // CSV: use balance delta as ground truth — always exact regardless of
+    // transaction type (handles fees, crypto conversions, internal transfers).
     income = 0; expense = 0;
     for (const t of sorted) {
-      if (t.internal) continue;
-      if (t.amount > 0) income  += t.amount;
-      else              expense += Math.abs(t.amount);
+      const delta = t.amount - Math.abs(t.fee || 0);
+      if (delta > 0) income  += delta;
+      else           expense += Math.abs(delta);
     }
-    // Round to cent to avoid floating-point drift
     income  = Math.round(income  * 100) / 100;
     expense = Math.round(expense * 100) / 100;
   }
-  if (typeof console !== 'undefined') {
-  }
   const netFlow = Math.round((income - expense) * 100) / 100;
-  // Fees: CSV 'Costo' column is 0 — use 'Commissione' tipo rows' abs(amount) instead
+  // Fees: sum all fee fields (covers Commissione, Addebita, etc.)
   const totalFees = Math.round(
-    txs.filter(t => (t.type||'').toLowerCase().trim() === 'commissione')
-       .reduce((s,t) => s + Math.abs(t.amount||0), 0) * 100
+    sorted.reduce((s,t) => s + Math.abs(t.fee || 0), 0) * 100
   ) / 100;
   const balHistory = sorted.filter(t=>t.balance!=null).map(t=>({date:t.dateStr,balance:t.balance}));
   const byMonth = {};
   for (const t of sorted) {
     const m = t.dateStr.slice(0, 7);
     if (!byMonth[m]) byMonth[m] = { month: m, income: 0, expense: 0, count: 0, fees: 0 };
-    if (!t.internal) {
-      if (t.amount > 0) byMonth[m].income  += t.amount;
-      else              byMonth[m].expense += Math.abs(t.amount);
-    }
+    const delta = t.amount - Math.abs(t.fee || 0);
+    if (delta > 0) byMonth[m].income  += delta;
+    else           byMonth[m].expense += Math.abs(delta);
     byMonth[m].count++;
     byMonth[m].fees += Math.abs(t.fee || 0);
   }
@@ -855,8 +881,28 @@ function OverviewPage({C,data,txs}) {
   const periodTxs=useMemo(()=>filterByPeriod(txs,period,customFrom,customTo),[txs,period,customFrom,customTo]);
   const periodData=useMemo(()=>periodTxs.length?analyzeTransactions(periodTxs):null,[periodTxs]);
   const d=period==='all'?data:periodData;
-  if(!d) return null;
-  const netColor=d.netFlow>=0?C.green:C.red;
+  const netColor=d?.netFlow>=0?C.green:C.red;
+
+  const EmptyPeriod=()=>(
+    <Glass C={C} style={{marginTop:8}}>
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'28px 16px'}}>
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="18" rx="2" stroke={C.sep2} strokeWidth="1.8"/><path d="M16 2v4M8 2v4M3 10h18" stroke={C.sep2} strokeWidth="1.8" strokeLinecap="round"/></svg>
+        <div style={{color:C.secondary,fontSize:14,fontFamily:FONT.text,fontWeight:600,textAlign:'center'}}>Nessuna transazione</div>
+        <div style={{color:C.tertiary,fontSize:12,fontFamily:FONT.text,textAlign:'center',lineHeight:1.5}}>Non ci sono movimenti nel periodo selezionato.</div>
+      </div>
+    </Glass>
+  );
+
+  if(!d) return (
+    <div className="rv-page" style={{padding:'0 16px 24px',display:'flex',flexDirection:'column',gap:16}}>
+      <SegCtrl C={C} options={PERIOD_OPTS} value={period} onChange={setPeriod}/>
+      {period==='custom'&&<CustomDatePicker C={C} from={customFrom} to={customTo} onChange={(f,t)=>{setCustomFrom(f);setCustomTo(t);}}/>}
+      <EmptyPeriod/>
+      {[{label:'Transazioni totali',val:'—'},{label:'Commissioni pagate',val:'—'},{label:'Valute',val:'—'}].map((r,i)=>(
+        <Glass C={C} key={i}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{color:C.secondary,fontSize:13,fontFamily:FONT.text}}>{r.label}</span><span style={{color:C.tertiary,fontSize:13,fontFamily:FONT.mono}}>{r.val}</span></div></Glass>
+      ))}
+    </div>
+  );
 
   return (
     <div className="rv-page" style={{padding:'0 16px 24px',display:'flex',flexDirection:'column',gap:16}}>
@@ -988,6 +1034,17 @@ function SpesePage({C,data,txs}) {
   const recurring=Object.values(descCount).filter(d=>d.count>=2).sort((a,b)=>b.total-a.total).slice(0,8);
 
   const COLORS=[C.purple,C.cyan,C.orange,C.red,C.green,C.pink,C.yellow,C.teal];
+
+  const EmptySpese=()=>(
+    <Glass C={C} style={{marginTop:4}}>
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'28px 16px'}}>
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke={C.sep2} strokeWidth="1.8"/><path d="M12 7v5l3 3" stroke={C.sep2} strokeWidth="1.8" strokeLinecap="round"/></svg>
+        <div style={{color:C.secondary,fontSize:14,fontFamily:FONT.text,fontWeight:600}}>Nessuna spesa</div>
+        <div style={{color:C.tertiary,fontSize:12,fontFamily:FONT.text,textAlign:'center',lineHeight:1.5}}>Non ci sono uscite nel periodo selezionato.</div>
+      </div>
+    </Glass>
+  );
+
   return (
     <div className="rv-page" style={{padding:'0 16px 24px',display:'flex',flexDirection:'column',gap:14}}>
       <SegCtrl C={C} options={PERIOD_OPTS} value={period} onChange={v=>{setPeriod(v);setActiveCat(null);}}/>
@@ -1000,6 +1057,7 @@ function SpesePage({C,data,txs}) {
         <div style={{color:C.cyan,fontSize:42,fontFamily:FONT.display,fontWeight:700,letterSpacing:'-1.5px',fontVariantNumeric:'tabular-nums',...neonText(C.cyan,C.scheme)}}>{fmt.currency(activeCat?displayTxs.reduce((s,t)=>s+Math.abs(t.amount),0):total,cur)}</div>
         <div style={{color:C.tertiary,fontSize:11,fontFamily:FONT.mono,marginTop:6}}>{displayTxs.length} transazioni</div>
       </div></Glass>
+      {baseFiltered.length===0&&<EmptySpese/>}
       {cats.length>0&&(
         <Glass C={C}>
           <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:14}}>Per Categoria <span style={{color:C.tertiary,fontWeight:400,fontSize:10}}>{activeCat?'— tocca per resettare':'— tocca per filtrare'}</span></div>
@@ -1153,7 +1211,13 @@ function MovimentiPage({C,txs}) {
               </button>
             </div>
           )}
-          {filtered.length===0&&<div style={{padding:'32px',textAlign:'center',color:C.tertiary,fontSize:13,fontFamily:FONT.text}}>Nessuna transazione trovata</div>}
+          {filtered.length===0&&(
+            <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'36px 16px'}}>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke={C.sep2} strokeWidth="1.8"/><path d="m21 21-4.35-4.35" stroke={C.sep2} strokeWidth="1.8" strokeLinecap="round"/></svg>
+              <div style={{color:C.secondary,fontSize:14,fontFamily:FONT.text,fontWeight:600}}>Nessuna transazione trovata</div>
+              <div style={{color:C.tertiary,fontSize:12,fontFamily:FONT.text,textAlign:'center',lineHeight:1.5}}>Prova a cambiare periodo o filtri.</div>
+            </div>
+          )}
         </div>
       </Glass>
     </div>
@@ -1418,14 +1482,135 @@ function AnalyticsPage({C,data,txs}) {
 }
 
 /* ============= UPLOAD SCREEN ============= */
+/* ============= iCLOUD PDFCSV FOLDER WATCH ============= */
+// Persisted directory handle key
+const DIR_HANDLE_KEY = 'hb_pdfcsv_dir';
+
+async function saveDirectoryHandle(handle) {
+  try {
+    const db = await openHandleDB();
+    return new Promise((res, rej) => {
+      const tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').put(handle, DIR_HANDLE_KEY);
+      tx.oncomplete = () => res(true);
+      tx.onerror = () => rej(tx.error);
+    });
+  } catch { return false; }
+}
+
+async function loadDirectoryHandle() {
+  try {
+    const db = await openHandleDB();
+    return new Promise((res) => {
+      const tx = db.transaction('handles', 'readonly');
+      const req = tx.objectStore('handles').get(DIR_HANDLE_KEY);
+      req.onsuccess = () => res(req.result || null);
+      req.onerror = () => res(null);
+    });
+  } catch { return null; }
+}
+
+function openHandleDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open('hb_handles', 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore('handles');
+    req.onsuccess = e => res(e.target.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+
+async function getNewestFile(dirHandle) {
+  let newest = null;
+  let newestTime = 0;
+  for await (const [name, handle] of dirHandle.entries()) {
+    if (handle.kind !== 'file') continue;
+    if (!name.endsWith('.csv') && !name.endsWith('.pdf')) continue;
+    const file = await handle.getFile();
+    if (file.lastModified > newestTime) {
+      newestTime = file.lastModified;
+      newest = file;
+    }
+  }
+  return newest;
+}
+
 function UploadScreen({C,onLoad,accountName}) {
   const [dragging,setDragging]=useState(false);
   const [error,setError]=useState('');
   const [loading,setLoading]=useState(false);
   const [progress,setProgress]=useState(0);
+  const [watchStatus,setWatchStatus]=useState('idle'); // idle | watching | checking | no_file
+  const [watchedDir,setWatchedDir]=useState(null);       // DirectoryHandle
+  const [lastLoaded,setLastLoaded]=useState(null);        // {name, time}
+  const [lastFileTime,setLastFileTime]=useState(0);
   const fileRef=useRef();
+  const intervalRef=useRef(null);
+  const supportsFS = typeof window.showDirectoryPicker === 'function';
 
-  const processFile=async(file)=>{
+  // On mount: restore saved handle
+  useEffect(()=>{
+    (async()=>{
+      const handle = await loadDirectoryHandle();
+      if(!handle) return;
+      try {
+        // Check permission
+        const perm = await handle.queryPermission({mode:'read'});
+        if(perm==='granted') { attachWatch(handle); }
+        else { setWatchStatus('idle'); }
+      } catch { /* handle stale */ }
+    })();
+    return ()=>{ if(intervalRef.current) clearInterval(intervalRef.current); };
+  },[]);
+
+  const attachWatch = (handle) => {
+    setWatchedDir(handle);
+    setWatchStatus('watching');
+    if(intervalRef.current) clearInterval(intervalRef.current);
+    // Check immediately, then every 60 seconds
+    checkForNew(handle);
+    intervalRef.current = setInterval(()=>checkForNew(handle), 60_000);
+  };
+
+  const checkForNew = async(handle) => {
+    setWatchStatus('checking');
+    try {
+      const file = await getNewestFile(handle);
+      if(!file){ setWatchStatus('no_file'); return; }
+      setWatchStatus('watching');
+      // Only reload if file is newer than what we last loaded
+      setLastFileTime(prev => {
+        if(file.lastModified > prev) {
+          processFile(file, file.lastModified);
+          return file.lastModified;
+        }
+        return prev;
+      });
+    } catch(e) {
+      setWatchStatus('idle');
+    }
+  };
+
+  const connectFolder = async() => {
+    if(!supportsFS){ setError('Il tuo browser non supporta File System Access API. Usa Chrome o Safari 15.2+ su Mac.'); return; }
+    try {
+      const handle = await window.showDirectoryPicker({mode:'read', startIn:'documents', id:'pdfcsv'});
+      await saveDirectoryHandle(handle);
+      attachWatch(handle);
+    } catch(e) {
+      if(e.name!=='AbortError') setError('Errore accesso cartella: '+e.message);
+    }
+  };
+
+  const disconnectFolder = () => {
+    if(intervalRef.current) clearInterval(intervalRef.current);
+    setWatchedDir(null);
+    setWatchStatus('idle');
+    setLastLoaded(null);
+    setLastFileTime(0);
+    saveDirectoryHandle(null).catch(()=>{});
+  };
+
+  const processFile=async(file, fileTime)=>{
     if(!file) return;
     setError(''); setLoading(true); setProgress(5);
     try {
@@ -1436,14 +1621,15 @@ function UploadScreen({C,onLoad,accountName}) {
         const txs=await parseRevolutPDF(buf,setProgress);
         setProgress(100);
         if(txs.length===0){setError('Nessuna transazione trovata nel PDF. Prova con il CSV o un PDF diverso.');setLoading(false);return;}
+        setLastLoaded({name:file.name, time: file.lastModified||Date.now()});
         setTimeout(()=>onLoad(txs),300);
       } else {
-        // CSV
         const text=await file.text();
         setProgress(60);
         const txs=parseRevolutCSV(text);
         setProgress(100);
         if(txs.length===0){setError('Nessuna transazione trovata. Verifica che sia un CSV Revolut valido.');setLoading(false);return;}
+        setLastLoaded({name:file.name, time: file.lastModified||Date.now()});
         setTimeout(()=>onLoad(txs),300);
       }
     } catch(e) {
@@ -1451,6 +1637,15 @@ function UploadScreen({C,onLoad,accountName}) {
       setLoading(false);
     }
   };
+
+  const fmtTime = (ts) => {
+    if(!ts) return '';
+    const d = new Date(ts);
+    return d.toLocaleDateString('it-IT',{day:'2-digit',month:'short'})+' '+d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
+  };
+
+  const statusDot = watchStatus==='watching'?C.green : watchStatus==='checking'?C.cyan : watchStatus==='no_file'?C.orange : C.tertiary;
+  const statusLabel = watchStatus==='watching'?'Attiva' : watchStatus==='checking'?'Verifica...' : watchStatus==='no_file'?'Nessun file trovato' : 'Non connessa';
 
   return (
     <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:24,gap:24,background:'#000000',minHeight:'100%'}}>
@@ -1490,6 +1685,57 @@ function UploadScreen({C,onLoad,accountName}) {
         </div>
       ):(
         <>
+          {/* ── iCloud PDFCSV auto-watch card ── */}
+          {supportsFS && (
+            <Glass C={C} style={{width:'100%',maxWidth:340}} padding="p-4">
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z" stroke={C.cyan} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <span style={{color:C.primary,fontSize:13,fontFamily:FONT.text,fontWeight:700,flex:1}}>Auto-sync iCloud · PDFCSV</span>
+                {watchedDir && (
+                  <div style={{display:'flex',alignItems:'center',gap:4}}>
+                    <div style={{width:7,height:7,borderRadius:4,background:statusDot,boxShadow:`0 0 6px ${statusDot}`}}/>
+                    <span style={{color:statusDot,fontSize:10,fontFamily:FONT.mono,fontWeight:600}}>{statusLabel}</span>
+                  </div>
+                )}
+              </div>
+
+              {watchedDir ? (
+                <>
+                  <div style={{color:C.secondary,fontSize:12,fontFamily:FONT.text,lineHeight:1.5,marginBottom:10}}>
+                    L'app controlla ogni 60 secondi la cartella <span style={{color:C.cyan,fontWeight:600}}>PDFCSV</span> e carica automaticamente il file più recente.
+                  </div>
+                  {lastLoaded && (
+                    <div style={{display:'flex',alignItems:'center',gap:6,padding:'6px 10px',background:`${C.green}12`,border:`0.5px solid ${C.green}30`,borderRadius:RADIUS.inset,marginBottom:10}}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12" stroke={C.green} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      <span style={{color:C.green,fontSize:11,fontFamily:FONT.mono,flex:1}}>{lastLoaded.name}</span>
+                      <span style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono}}>{fmtTime(lastLoaded.time)}</span>
+                    </div>
+                  )}
+                  <div style={{display:'flex',gap:8}}>
+                    <button onClick={()=>checkForNew(watchedDir)} className="rv-btn" style={{flex:1,padding:'8px 0',fontSize:12,fontFamily:FONT.text,fontWeight:600,background:C.glass2,border:`0.5px solid ${C.sep}`,borderRadius:RADIUS.pill,cursor:'pointer',color:C.secondary}}>
+                      Controlla ora
+                    </button>
+                    <button onClick={disconnectFolder} className="rv-btn" style={{flex:1,padding:'8px 0',fontSize:12,fontFamily:FONT.text,fontWeight:600,background:`${C.red}14`,border:`0.5px solid ${C.red}40`,borderRadius:RADIUS.pill,cursor:'pointer',color:C.red}}>
+                      Disconnetti
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{color:C.secondary,fontSize:12,fontFamily:FONT.text,lineHeight:1.55,marginBottom:12}}>
+                    Collega la cartella <span style={{color:C.cyan,fontWeight:600}}>File → iCloud Drive → PDFCSV</span>. Ogni volta che salvi un nuovo CSV o PDF lì, l'app lo carica da sola.
+                  </div>
+                  <button onClick={connectFolder} className="rv-btn" style={{width:'100%',padding:'10px 0',fontSize:13,fontFamily:FONT.text,fontWeight:700,background:`linear-gradient(135deg, ${C.purple}30, ${C.cyan}20)`,border:`0.5px solid ${C.cyan}60`,borderRadius:RADIUS.pill,cursor:'pointer',color:C.cyan}}>
+                    Collega cartella PDFCSV
+                  </button>
+                </>
+              )}
+            </Glass>
+          )}
+
+          {/* ── Manual upload fallback ── */}
           <div onClick={()=>fileRef.current?.click()} onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={e=>{e.preventDefault();setDragging(false);processFile(e.dataTransfer.files[0]);}} style={{width:'100%',maxWidth:340,padding:'32px 24px',borderRadius:RADIUS.card,border:`1.5px dashed ${dragging?C.cyan:C.sep2}`,background:dragging?`${C.cyan}08`:C.glass,display:'flex',flexDirection:'column',alignItems:'center',gap:12,cursor:'pointer',transition:'all 0.2s ease'}}>
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke={C.tertiary} strokeWidth="1.8"/><polyline points="14 2 14 8 20 8" stroke={C.tertiary} strokeWidth="1.8"/><line x1="16" y1="13" x2="8" y2="13" stroke={C.tertiary} strokeWidth="1.8" strokeLinecap="round"/></svg>
             <div style={{color:C.primary,fontSize:15,fontFamily:FONT.text,fontWeight:600}}>Trascina il file qui</div>
@@ -1503,10 +1749,10 @@ function UploadScreen({C,onLoad,accountName}) {
           {error&&<div style={{color:C.red,fontSize:13,fontFamily:FONT.text,textAlign:'center',maxWidth:300}}>{error}</div>}
           <Glass C={C} style={{width:'100%',maxWidth:340}} padding="p-4">
             <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:10}}>Come esportare da Revolut</div>
-            {['Apri Revolut → Profilo','Vai su "Estratti conto"','Seleziona il periodo','Scegli PDF (italiano) o CSV ed esporta'].map((s,i)=>(
-              <div key={i} style={{display:'flex',gap:10,alignItems:'flex-start',marginBottom:i<3?8:0}}>
-                <div style={{width:18,height:18,borderRadius:9,flexShrink:0,background:`${C.cyan}20`,border:`0.5px solid ${C.cyan}50`,display:'flex',alignItems:'center',justifyContent:'center',color:C.cyan,fontSize:10,fontFamily:FONT.mono,fontWeight:700}}>{i+1}</div>
-                <span style={{color:C.secondary,fontSize:12,fontFamily:FONT.text}}>{s}</span>
+            {['Apri Revolut → Profilo','Vai su "Estratti conto"','Seleziona il periodo','Scegli PDF (italiano) o CSV ed esporta','Salva nella cartella PDFCSV su iCloud Drive'].map((s,i)=>(
+              <div key={i} style={{display:'flex',gap:10,alignItems:'flex-start',marginBottom:i<4?8:0}}>
+                <div style={{width:18,height:18,borderRadius:9,flexShrink:0,background:i===4?`${C.cyan}30`:`${C.cyan}20`,border:`0.5px solid ${i===4?C.cyan:C.cyan}50`,display:'flex',alignItems:'center',justifyContent:'center',color:C.cyan,fontSize:10,fontFamily:FONT.mono,fontWeight:700}}>{i+1}</div>
+                <span style={{color:i===4?C.cyan:C.secondary,fontSize:12,fontFamily:FONT.text,fontWeight:i===4?600:400}}>{s}</span>
               </div>
             ))}
           </Glass>
@@ -2368,8 +2614,8 @@ export default function App() {
 
       {/* HEADER — identico a XAUTrader: overflow:hidden, transform translateY(-6px) */}
       <header style={{position:'sticky',zIndex:30,
-        top: -6,
-        marginBottom: -6,
+        top: -12,
+        marginBottom: -12,
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
