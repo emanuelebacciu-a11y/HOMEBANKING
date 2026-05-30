@@ -2514,7 +2514,12 @@ export default function App() {
   useEffect(()=>{injectCSS();injectPressManager();injectPWAMeta();},[]);
 
   // ── Altezza reale — identico a XAUTrader ──────────────────────────────────
-  const getH = () => window.screen.height;
+  const getH = () => {
+    const isStandalone =
+      ('standalone' in navigator && navigator.standalone === true) ||
+      window.matchMedia('(display-mode: standalone)').matches;
+    return isStandalone ? window.screen.height : window.innerHeight;
+  };
   const [appHeight, setAppHeight] = useState(() => getH());
   useEffect(() => {
     const update = () => setAppHeight(getH());
@@ -2593,8 +2598,8 @@ export default function App() {
     <div style={{
       background:C.bg, color:C.primary, fontFamily:FONT.text,
       WebkitFontSmoothing:'antialiased', MozOsxFontSmoothing:'grayscale',
-      position:'fixed', top:0, left:0, right:0,
-      height: window.screen.height,
+      position:'fixed', top:0, left:0, right:0, bottom:0,
+      height: appHeight,
       display:'flex', flexDirection:'column',
     }}>
       <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,pointerEvents:'none',background:C.ambient}}/>
@@ -2607,10 +2612,11 @@ export default function App() {
         onLoadForAccount={onLoadForAccount}
       />
 
-      {/* HEADER — black-translucent permette al bg di estendersi sotto il notch */}
+      {/* HEADER — sfondo esteso fino al bordo fisico sopra il notch */}
       <header style={{position:'sticky',zIndex:30,
-        top: 0,
-        paddingTop: 'env(safe-area-inset-top, 54px)',
+        top: -60,
+        marginBottom: -60,
+        paddingTop: 60,
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
