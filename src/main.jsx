@@ -6,7 +6,7 @@ function setVh() {
   const isStandalone =
     ('standalone' in navigator && navigator.standalone === true) ||
     window.matchMedia('(display-mode: standalone)').matches;
-  const h = isStandalone ? screen.height : window.innerHeight;
+  const h = window.innerHeight;
   document.documentElement.style.setProperty('--app-height', `${h}px`);
   document.documentElement.style.setProperty('--vh', `${h * 0.01}px`);
 }

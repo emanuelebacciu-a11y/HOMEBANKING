@@ -2624,7 +2624,7 @@ export default function App() {
       }}>
         <div className="rv-shimmer-overlay" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:scheme==='dark'?1:0.4}}/>
         <div style={{maxWidth:'100%',margin:'0 auto',padding:'4px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,position:'relative',minHeight:44}}>
-          <span style={{fontFamily:FONT.text,fontSize:13,fontWeight:600,color:C.primary,letterSpacing:'-0.2px',flexShrink:0,marginRight:8}}>{activeAccountId==='__all__'?'Tutti i conti':activeAcc?.name||'HomeBanking'} | sh:{Math.round(screen.height)} ih:{Math.round(window.innerHeight)} dpr:{window.devicePixelRatio} ah:{Math.round(appHeight)}</span>
+          <span style={{fontFamily:FONT.text,fontSize:13,fontWeight:600,color:C.primary,letterSpacing:'-0.2px',flexShrink:0,marginRight:8}}>{activeAccountId==='__all__'?'Tutti i conti':activeAcc?.name||'HomeBanking'}</span>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
             {accounts.length>0&&<AccountPill C={C} accounts={accounts} activeAccountId={activeAccountId} setActiveAccountId={setActiveAccountId}/>}
             <button onClick={()=>setSettingsOpen(true)} className="rv-btn" style={{width:30,height:30,borderRadius:15,background:C.glass2,border:`0.5px solid ${C.sep}`,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
