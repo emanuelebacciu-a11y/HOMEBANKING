@@ -2515,14 +2515,10 @@ export default function App() {
 
   // ── Altezza reale — identico a XAUTrader ──────────────────────────────────
   const getH = () => {
-    // Usa screen.height per riempire sempre tutto lo schermo fisico (edge-to-edge)
     const isStandalone =
       ('standalone' in navigator && navigator.standalone === true) ||
       window.matchMedia('(display-mode: standalone)').matches;
-    // In standalone (PWA installata) screen.height è perfetto.
-    // In browser usiamo screen.height comunque: il div è fixed top:0 bottom:0
-    // quindi trabocca oltre la barra del browser creando l'effetto edge-to-edge.
-    return window.screen.height;
+    return isStandalone ? window.screen.height : window.innerHeight;
   };
   const [appHeight, setAppHeight] = useState(() => getH());
   useEffect(() => {
@@ -2604,7 +2600,6 @@ export default function App() {
       WebkitFontSmoothing:'antialiased', MozOsxFontSmoothing:'grayscale',
       position:'fixed', top:0, left:0, right:0, bottom:0,
       height: appHeight,
-      minHeight: '100dvh',
       display:'flex', flexDirection:'column',
     }}>
       <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,pointerEvents:'none',background:C.ambient}}/>
@@ -2617,19 +2612,18 @@ export default function App() {
         onLoadForAccount={onLoadForAccount}
       />
 
-      {/* HEADER: esteso fisicamente sopra il notch con margine negativo */}
+      {/* HEADER — identico a XAUTrader: overflow:hidden, transform translateY(-6px) */}
       <header style={{position:'sticky',zIndex:30,
-        top: 'calc(-1 * env(safe-area-inset-top, 0px))',
-        marginTop: 'calc(-1 * env(safe-area-inset-top, 0px))',
-        paddingTop: 'env(safe-area-inset-top, 0px)',
+        top: -12,
+        marginBottom: -12,
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
-        paddingBottom: 8,
         borderBottom: `0.5px solid ${C.sep}`,
+        paddingTop: 'env(safe-area-inset-top, 0px)',
       }}>
         <div className="rv-shimmer-overlay" style={{position:'absolute',top:0,left:0,right:0,bottom:0,opacity:scheme==='dark'?1:0.4}}/>
-        <div style={{maxWidth:'100%',margin:'0 auto',padding:'8px 16px 2px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,position:'relative',minHeight:36}}>
+        <div style={{maxWidth:'100%',margin:'0 auto',padding:'4px 16px',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,position:'relative',minHeight:44}}>
           <span style={{fontFamily:FONT.text,fontSize:13,fontWeight:600,color:C.primary,letterSpacing:'-0.2px',flexShrink:0,marginRight:8}}>{activeAccountId==='__all__'?'Tutti i conti':activeAcc?.name||'HomeBanking'}</span>
           <div style={{display:'flex',alignItems:'center',gap:6}}>
             {accounts.length>0&&<AccountPill C={C} accounts={accounts} activeAccountId={activeAccountId} setActiveAccountId={setActiveAccountId}/>}

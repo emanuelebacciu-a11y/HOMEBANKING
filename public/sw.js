@@ -1,4 +1,4 @@
-const CACHE_NAME = 'homebanking-v2';
+const CACHE_NAME = 'homebanking-v1';
 const STATIC_ASSETS = ['/', '/index.html', '/manifest.json'];
 
 self.addEventListener('install', event => {
