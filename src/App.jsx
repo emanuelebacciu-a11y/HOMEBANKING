@@ -2612,12 +2612,11 @@ export default function App() {
         onLoadForAccount={onLoadForAccount}
       />
 
-      {/* HEADER — sfondo esteso fino al bordo fisico sopra il notch */}
-      <header style={{position:'sticky',zIndex:30,
-        top: -54,
-        marginBottom: -54,
+      {/* HEADER — fixed, copre notch + status bar */}
+      <header style={{position:'fixed',zIndex:30,
+        top: 0, left: 0, right: 0,
         paddingTop: 54,
-        background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
+        background: scheme==='dark'?'rgba(0,0,0,0.72)':'rgba(255,255,255,0.72)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
         borderBottom: `0.5px solid ${C.sep}`,
@@ -2639,7 +2638,7 @@ export default function App() {
 
       {/* PAGER — identico a XAUTrader: AI separato, scroll wrapper con safe-area */}
       {showUpload ? (
-        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none'}}>
+        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingTop:106}}>
           <UploadScreen C={C} accountName={activeAcc?.name||'Conto'} onLoad={(txs)=>onLoadForAccount(activeAccountId,txs)}/>
         </div>
       ) : currentTab==='ai' ? (
@@ -2649,7 +2648,7 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingBottom:0}}>
+        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none',paddingBottom:0,paddingTop:106}}>
         <div style={{paddingBottom:'calc(96px + env(safe-area-inset-bottom, 0px))', paddingTop:12}}>
             {currentTab==='overview'  &&<OverviewPage   C={C} data={data} txs={activeTxs}/>}
             {currentTab==='spese'     &&<SpesePage      C={C} data={data} txs={activeTxs}/>}
