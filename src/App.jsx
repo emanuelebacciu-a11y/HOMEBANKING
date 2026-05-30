@@ -2614,8 +2614,8 @@ export default function App() {
 
       {/* HEADER — identico a XAUTrader: overflow:hidden, transform translateY(-6px) */}
       <header style={{position:'sticky',zIndex:30,
-        top: -28,
-        marginBottom: -28,
+        top: -27,
+        marginBottom: -27,
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
         backdropFilter: 'saturate(200%) blur(32px)',
         WebkitBackdropFilter: 'saturate(200%) blur(32px)',
