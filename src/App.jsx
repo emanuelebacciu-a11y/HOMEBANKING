@@ -1234,14 +1234,11 @@ if (!GEMINI_API_KEY) {
   );
 }
 
-function AIPage({C,data,txs,setInputFocused}) {
-  const [isFocused,setIsFocused]=useState(false);
-
+function AIPage({C,data,txs,setInputFocused,input,setInput,send,inputRef}) {
   const CHAT_KEY='hb_chat_history';
   const [messages,setMessages]=useState(()=>{
     try{const s=localStorage.getItem(CHAT_KEY);return s?JSON.parse(s):[];}catch{return [];}
   });
-  const [input,setInput]=useState('');
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState(null);
 
@@ -1250,7 +1247,6 @@ function AIPage({C,data,txs,setInputFocused}) {
     try{localStorage.setItem(CHAT_KEY,JSON.stringify(messages));}catch{}
   },[messages]);
   const scrollRef=useRef(null);
-  const inputRef=useRef(null);
   const cur=txs[0]?.currency||'EUR';
 
   const buildContext=useMemo(()=>!data?'':
@@ -1273,7 +1269,7 @@ Rispondi sempre in italiano, in modo conciso e diretto. Non dare consigli operat
 
   useEffect(()=>{ if(scrollRef.current) scrollRef.current.scrollTop=scrollRef.current.scrollHeight; },[messages,loading]);
 
-  const send=async()=>{
+  const sendInternal=async()=>{
     const text=input.trim();
     if(!text||loading) return;
     setError(null);
@@ -1305,6 +1301,9 @@ Rispondi sempre in italiano, in modo conciso e diretto. Non dare consigli operat
     finally { setLoading(false); }
   };
 
+  // Wire the send prop (called from outside input bar) to sendInternal
+  useEffect(()=>{ if(send) send.current=sendInternal; });
+
   const clearChat=()=>{
     if(messages.length===0) return;
     if(window.confirm('Cancellare tutta la conversazione?')){haptic.medium();setMessages([]);setError(null);try{localStorage.removeItem(CHAT_KEY);}catch{}}
@@ -1320,8 +1319,8 @@ Rispondi sempre in italiano, in modo conciso e diretto. Non dare consigli operat
         </div>
       )}
 
-      {/* Messages scroll area */}
-      <div ref={scrollRef} style={{flex:1,minHeight:0,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',padding:'12px 16px 8px'}}>
+      {/* Messages scroll area — bottom padding leaves space for fixed input bar */}
+      <div ref={scrollRef} style={{flex:1,minHeight:0,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',padding:'12px 16px 80px'}}>
         {messages.length===0&&(
           <div className="rv-card" style={{background:C.glass,backdropFilter:'blur(32px)',WebkitBackdropFilter:'blur(32px)',border:`0.5px solid ${C.sep2}`,borderRadius:RADIUS.card,overflow:'hidden',position:'relative',padding:24}}>
             <div style={{display:'flex',flexDirection:'column',alignItems:'center',textAlign:'center',gap:12}}>
@@ -1358,26 +1357,6 @@ Rispondi sempre in italiano, in modo conciso e diretto. Non dare consigli operat
         {error&&(
           <div style={{background:`${C.red}15`,border:`0.5px solid ${C.red}40`,borderRadius:14,padding:'10px 14px',color:C.red,fontSize:12,fontFamily:FONT.mono,marginBottom:10}}>⚠️ {error}</div>
         )}
-      </div>
-
-      {/* Input bar */}
-      <div style={{flexShrink:0,padding:'4px 12px',paddingBottom:isFocused?'8px':'calc(82px + env(safe-area-inset-bottom, 0px))',background:"inherit",borderTop:`0.5px solid ${C.sep}`,transition:'padding-bottom 0.25s ease'}}>
-        <div style={{display:'flex',alignItems:'flex-end',gap:8,background:C.glass,backdropFilter:'blur(20px)',WebkitBackdropFilter:'blur(20px)',border:`0.5px solid ${C.sep2}`,borderRadius:24,padding:'6px 6px 6px 14px',marginBottom:6}}>
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={e=>setInput(e.target.value)}
-            onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}}}
-            onFocus={()=>{setInputFocused?.(true);setIsFocused(true);}}
-            onBlur={()=>{setInputFocused?.(false);setIsFocused(false);}}
-            placeholder="Chiedi qualcosa sui tuoi dati..."
-            rows={1}
-            style={{flex:1,background:'transparent',border:'none',outline:'none',color:C.primary,fontSize:16,fontFamily:FONT.text,resize:'none',padding:'8px 0',maxHeight:120,letterSpacing:'-0.1px',lineHeight:1.4}}
-          />
-          <button onClick={send} disabled={loading||!input.trim()} className="rv-btn" style={{width:36,height:36,borderRadius:18,background:!input.trim()||loading?C.glass3:C.primary,border:'none',cursor:!input.trim()||loading?'default':'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'all 0.2s'}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 5l7 7-7 7" stroke={!input.trim()||loading?C.tertiary:C.bg} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -2539,6 +2518,10 @@ export default function App() {
 
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [inputFocused,setInputFocused]=useState(false);
+  const [aiInput,setAiInput]=useState('');
+  const aiInputRef=useRef(null);
+  const aiSendRef=useRef(null); // AIPage will wire its sendInternal here
+  const [aiLoading,setAiLoading]=useState(false); // mirrored for button state
 
   // Multi-account state
   const [accounts,setAccounts]=usePersistedState('hb_accounts',[
@@ -2647,7 +2630,7 @@ export default function App() {
       ) : currentTab==='ai' ? (
         <div style={{flex:1,minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column'}}>
           <div style={{flex:1,minHeight:0,display:'flex',flexDirection:'column',maxWidth:896,width:'100%',margin:'0 auto',padding:'0 0',paddingBottom:'env(safe-area-inset-bottom, 0px)'}}>
-            <AIPage C={C} data={data} txs={activeTxs} setInputFocused={setInputFocused}/>
+            <AIPage C={C} data={data} txs={activeTxs} setInputFocused={setInputFocused} input={aiInput} setInput={setAiInput} send={aiSendRef} inputRef={aiInputRef}/>
           </div>
         </div>
       ) : (
@@ -2671,6 +2654,48 @@ export default function App() {
       }}>
         <TabBar C={C} tabIdx={tabIdx} onTabTap={handleTabTap} scheme={scheme}/>
       </div>
+
+      {/* AI INPUT BAR — fixed, sits just above tab bar when closed, just above keyboard when open */}
+      {currentTab==='ai'&&!showUpload&&(
+        <div style={{
+          position:'fixed',
+          left:0,right:0,
+          bottom:0,
+          zIndex:49,
+          paddingBottom: inputFocused
+            ? 'env(safe-area-inset-bottom, 0px)'
+            : 'calc(82px + env(safe-area-inset-bottom, 0px))',
+          paddingLeft:12,paddingRight:12,paddingTop:8,
+          background: scheme==='dark'
+            ? 'linear-gradient(to top, rgba(0,0,0,0.85) 60%, transparent)'
+            : 'linear-gradient(to top, rgba(255,255,255,0.85) 60%, transparent)',
+          backdropFilter:'blur(0px)',
+          transition:'padding-bottom 0.25s ease',
+          pointerEvents:'auto',
+        }}>
+          <div style={{display:'flex',alignItems:'flex-end',gap:8,background:C.glass,backdropFilter:'blur(20px)',WebkitBackdropFilter:'blur(20px)',border:`0.5px solid ${C.sep2}`,borderRadius:24,padding:'6px 6px 6px 14px',marginBottom:4,boxShadow:scheme==='dark'?'0 8px 32px rgba(0,0,0,0.5)':'0 8px 32px rgba(0,0,0,0.12)'}}>
+            <textarea
+              ref={aiInputRef}
+              value={aiInput}
+              onChange={e=>setAiInput(e.target.value)}
+              onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();aiSendRef.current?.();}}}
+              onFocus={()=>setInputFocused(true)}
+              onBlur={()=>setInputFocused(false)}
+              placeholder="Chiedi qualcosa sui tuoi dati..."
+              rows={1}
+              style={{flex:1,background:'transparent',border:'none',outline:'none',color:C.primary,fontSize:16,fontFamily:FONT.text,resize:'none',padding:'8px 0',maxHeight:120,letterSpacing:'-0.1px',lineHeight:1.4}}
+            />
+            <button
+              onClick={()=>aiSendRef.current?.()}
+              disabled={!aiInput.trim()}
+              className="rv-btn"
+              style={{width:36,height:36,borderRadius:18,background:!aiInput.trim()?C.glass3:C.primary,border:'none',cursor:!aiInput.trim()?'default':'pointer',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'all 0.2s'}}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 5l7 7-7 7" stroke={!aiInput.trim()?C.tertiary:C.bg} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
