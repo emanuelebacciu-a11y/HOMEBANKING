@@ -2612,8 +2612,8 @@ export default function App() {
         onLoadForAccount={onLoadForAccount}
       />
 
-      {/* HEADER — come XAUTrader: translateY(-6px) + black-translucent */}
-      <header style={{position:'sticky',zIndex:30,
+      {/* HEADER — identico a XAUTrader */}
+      <header className="sticky z-30 overflow-hidden" style={{
         top: 0,
         transform: 'translateY(-6px)',
         background: scheme==='dark'?'rgba(0,0,0,0.48)':'rgba(255,255,255,0.58)',
