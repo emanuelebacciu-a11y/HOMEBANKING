@@ -2593,7 +2593,8 @@ export default function App() {
     <div style={{
       background:C.bg, color:C.primary, fontFamily:FONT.text,
       WebkitFontSmoothing:'antialiased', MozOsxFontSmoothing:'grayscale',
-      position:'fixed', top:0, left:0, right:0, bottom:0,
+      position:'fixed', top:0, left:0, right:0,
+      height: window.screen.height,
       display:'flex', flexDirection:'column',
     }}>
       <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,pointerEvents:'none',background:C.ambient}}/>
