@@ -2655,25 +2655,19 @@ export default function App() {
         <TabBar C={C} tabIdx={tabIdx} onTabTap={handleTabTap} scheme={scheme}/>
       </div>
 
-      {/* AI INPUT BAR — fixed, sits just above tab bar when closed, just above keyboard when open */}
+      {/* AI INPUT BAR — fixed, appena sopra la tab bar; quando tastiera aperta iOS la solleva automaticamente */}
       {currentTab==='ai'&&!showUpload&&(
         <div style={{
           position:'fixed',
           left:0,right:0,
-          bottom:0,
+          bottom: inputFocused ? 5 : 'calc(17px + 48px + 5px + env(safe-area-inset-bottom, 0px))',
           zIndex:49,
-          paddingBottom: inputFocused
-            ? 'env(safe-area-inset-bottom, 0px)'
-            : 'calc(82px + env(safe-area-inset-bottom, 0px))',
-          paddingLeft:12,paddingRight:12,paddingTop:8,
-          background: scheme==='dark'
-            ? 'linear-gradient(to top, rgba(0,0,0,0.85) 60%, transparent)'
-            : 'linear-gradient(to top, rgba(255,255,255,0.85) 60%, transparent)',
-          backdropFilter:'blur(0px)',
-          transition:'padding-bottom 0.25s ease',
+          padding:'6px 12px',
+          paddingBottom: inputFocused ? 'env(safe-area-inset-bottom, 0px)' : '6px',
+          transition:'bottom 0.25s ease, padding-bottom 0.25s ease',
           pointerEvents:'auto',
         }}>
-          <div style={{display:'flex',alignItems:'flex-end',gap:8,background:C.glass,backdropFilter:'blur(20px)',WebkitBackdropFilter:'blur(20px)',border:`0.5px solid ${C.sep2}`,borderRadius:24,padding:'6px 6px 6px 14px',marginBottom:4,boxShadow:scheme==='dark'?'0 8px 32px rgba(0,0,0,0.5)':'0 8px 32px rgba(0,0,0,0.12)'}}>
+          <div style={{display:'flex',alignItems:'flex-end',gap:8,background:C.glass,backdropFilter:'blur(20px)',WebkitBackdropFilter:'blur(20px)',border:`0.5px solid ${C.sep2}`,borderRadius:24,padding:'6px 6px 6px 14px',boxShadow:scheme==='dark'?'0 8px 32px rgba(0,0,0,0.5)':'0 8px 32px rgba(0,0,0,0.12)'}}>
             <textarea
               ref={aiInputRef}
               value={aiInput}
