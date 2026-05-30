@@ -2660,7 +2660,7 @@ export default function App() {
         <div style={{
           position:'fixed',
           left:0,right:0,
-          bottom: inputFocused ? 5 : 'calc(17px + 48px + 5px + env(safe-area-inset-bottom, 0px))',
+          bottom: inputFocused ? -2 : 'calc(17px + 48px - 2px + env(safe-area-inset-bottom, 0px))',
           zIndex:49,
           padding:'6px 12px',
           paddingBottom: inputFocused ? 'env(safe-area-inset-bottom, 0px)' : '6px',
