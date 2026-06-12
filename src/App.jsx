@@ -1264,7 +1264,7 @@ Dati finanziari:
 - Categorie di spesa: ${(data.categories||[]).slice(0,6).map(c=>`${c.name}: ${fmt.currency(c.amount,cur)}`).join(', ')}
 - Top commercianti: ${(data.topMerchants||[]).slice(0,5).map(m=>`${m.name} (${fmt.currency(m.total,cur)}, ${m.count}x)`).join(', ')}
 - Mesi analizzati: ${(data.monthlyData||[]).length}
-Rispondi sempre in italiano, in modo conciso e diretto. Non dare consigli operativi, descrivi i dati.`
+Rispondi sempre in italiano, conciso e diretto. Rispondi a QUALSIASI domanda di Emanuele, inclusi consigli concreti e pratici su budget, risparmio, spese, commissioni e gestione del denaro: dai indicazioni schiette e azionabili senza disclaimer ripetuti. Emanuele e' adulto e consapevole, decide da solo. Usa SOLO i numeri reali qui sopra: non inventare dati, se manca qualcosa dillo.`
   ,[data,cur]);
 
   useEffect(()=>{ if(scrollRef.current) scrollRef.current.scrollTop=scrollRef.current.scrollHeight; },[messages,loading]);
