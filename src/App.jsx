@@ -1226,13 +1226,8 @@ function MovimentiPage({C,txs}) {
 }
 
 /* ============= AI ============= */
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+// La AI passa dalla funzione serverless /api/coach (chiave lato server).
 
-if (!GEMINI_API_KEY) {
-  console.warn(
-    'Gemini API key mancante. Imposta VITE_GEMINI_API_KEY nel file .env.local'
-  );
-}
 
 function AIPage({C,data,txs,setInputFocused,input,setInput,send,inputRef}) {
   const CHAT_KEY='hb_chat_history';
@@ -1281,20 +1276,19 @@ Rispondi sempre in italiano, conciso e diretto. Rispondi a QUALSIASI domanda di 
         role:m.role==='assistant'?'model':'user',
         parts:[{text:m.content}]
       }));
-      const resp=await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      const resp=await fetch('/api/coach',
         {method:'POST',headers:{'Content-Type':'application/json'},
          body:JSON.stringify({
-           systemInstruction:{parts:[{text:buildContext}]},
+           system:buildContext,
            contents,
            generationConfig:{temperature:0.7,maxOutputTokens:800},
          })}
       );
       const d=await resp.json();
-      if(!resp.ok){
-        setError(d.error?.message||`Errore ${resp.status}`); haptic.error();
+      if(!resp.ok||d.error){
+        setError(d.error||`Errore ${resp.status}`); haptic.error();
       } else {
-        const reply=d.candidates?.[0]?.content?.parts?.[0]?.text||'Nessuna risposta.';
+        const reply=d.text||'Nessuna risposta.';
         setMessages([...newMessages,{role:'assistant',content:reply}]); haptic.success();
       }
     } catch(e) { setError('Connessione fallita: '+e.message); haptic.error(); }
