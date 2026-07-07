@@ -1714,14 +1714,24 @@ function SettingsModal({C,open,onClose,schemeOverride,setSchemeOverride,accounts
     if(!newName.trim()) return;
     const id='acc_'+Date.now();
     setAccounts(prev=>[...prev,{id,name:newName.trim(),color:newColor,rawTxs:null}]);
+    // Se non c'è un conto attivo valido (es. dopo aver eliminato l'ultimo), seleziona questo.
+    if(!accounts.some(a=>a.id===activeAccountId)) setActiveAccountId(id);
     setNewName(''); setNewColor(BANK_COLORS[0]);
     haptic.success();
   };
 
   const removeAccount=(id)=>{
-    if(accounts.length<=1){haptic.error();return;}
+    const acc=accounts.find(a=>a.id===id);
+    const n=acc?.rawTxs?.length||0;
+    const msg = n>0
+      ? `Eliminare il conto "${acc?.name}" e le sue ${n} transazioni? L'operazione non è reversibile.`
+      : `Eliminare il conto "${acc?.name}"?`;
+    if(typeof window!=='undefined' && !window.confirm(msg)) return;
     setAccounts(prev=>prev.filter(a=>a.id!==id));
-    if(activeAccountId===id) setActiveAccountId(accounts.find(a=>a.id!==id)?.id||null);
+    if(activeAccountId===id){
+      const next=accounts.find(a=>a.id!==id);
+      setActiveAccountId(next?next.id:null);
+    }
     haptic.medium();
   };
 
@@ -1765,6 +1775,11 @@ function SettingsModal({C,open,onClose,schemeOverride,setSchemeOverride,accounts
           <div>
             <div style={{color:C.tertiary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:10}}>Conti Bancari</div>
             <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {accounts.length===0&&(
+                <div style={{padding:'12px 14px',background:C.glass2,border:`0.5px dashed ${C.sep2}`,borderRadius:RADIUS.inset,color:C.tertiary,fontSize:12,fontFamily:FONT.text,textAlign:'center'}}>
+                  Nessun conto. Creane uno qui sotto.
+                </div>
+              )}
               {accounts.map(acc=>(
                 <div key={acc.id}>
                   <div className="rv-row" style={{
@@ -1781,14 +1796,12 @@ function SettingsModal({C,open,onClose,schemeOverride,setSchemeOverride,accounts
                       </div>
                     </div>
                     {activeAccountId===acc.id&&<div style={{width:7,height:7,borderRadius:4,background:acc.color,boxShadow:`0 0 6px ${acc.color}`}}/>}
-                    {accounts.length>1&&(
-                      <button onClick={e=>{e.stopPropagation();removeAccount(acc.id);}} className="rv-btn" style={{
+                    <button onClick={e=>{e.stopPropagation();removeAccount(acc.id);}} className="rv-btn" style={{
                         width:24,height:24,borderRadius:12,background:`${C.red}20`,border:`0.5px solid ${C.red}40`,
                         cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',
                       }}>
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M18 6 6 18M6 6l12 12" stroke={C.red} strokeWidth="2.5" strokeLinecap="round"/></svg>
                       </button>
-                    )}
                   </div>
                 </div>
               ))}
