@@ -202,518 +202,7 @@ function usePersistedState(key, def) {
   return [v, set];
 }
 
-/* ============= PDF.JS LOADER ============= */
-async function loadPdfJs() {
-  if (window.pdfjsLib) return window.pdfjsLib;
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-    script.onload = () => {
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-      resolve(window.pdfjsLib);
-    };
-    script.onerror = reject;
-    document.head.appendChild(script);
-  });
-}
-
-/* ============= PDF PARSER ============= */
-async function parseRevolutPDF(arrayBuffer, onProgress) {
-  const pdfjsLib = await loadPdfJs();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const numPages = pdf.numPages;
-  let allLines = [];
-
-  for (let p = 1; p <= numPages; p++) {
-    onProgress?.(Math.round((p / numPages) * 80));
-    const page = await pdf.getPage(p);
-    const content = await page.getTextContent();
-
-    // Group items by Y position — use a tolerance of ±2pt to merge same-line items
-    // Revolut PDFs use a table layout: date | description | outgoing | incoming | balance
-    // We join items on the same Y row left-to-right, preserving column gaps
-    const byY = {};
-    for (const item of content.items) {
-      if (!item.str?.trim()) continue;
-      const y = Math.round(item.transform[5] / 2) * 2; // snap to 2pt grid
-      if (!byY[y]) byY[y] = [];
-      byY[y].push({ x: item.transform[4], text: item.str });
-    }
-
-    const sortedYs = Object.keys(byY).map(Number).sort((a, b) => b - a);
-    for (const y of sortedYs) {
-      const items = byY[y].sort((a, b) => a.x - b.x);
-      // Join with space; items far apart get extra space to preserve column separation
-      let line = '';
-      for (let k = 0; k < items.length; k++) {
-        if (k > 0) {
-          const gap = items[k].x - (items[k-1].x + (items[k-1].text.length * 5));
-          line += gap > 20 ? '  ' : ' ';
-        }
-        line += items[k].text;
-      }
-      line = line.trim();
-      if (line) allLines.push(line);
-    }
-  }
-
-  onProgress?.(90);
-  return parseRevolutLines(allLines);
-}
-
-/* ============= CSV PARSER ============= */
-function parseRevolutCSV(text) {
-  const lines = text.trim().split('\n');
-  if (lines.length < 2) return [];
-  const sep = lines[0].includes(';') ? ';' : ',';
-  const parseRow = (line) => {
-    const result = []; let current = ''; let inQ = false;
-    for (let i=0;i<line.length;i++) {
-      const ch=line[i];
-      if(ch==='"'){inQ=!inQ;continue;}
-      if(ch===sep&&!inQ){result.push(current.trim());current='';continue;}
-      current+=ch;
-    }
-    result.push(current.trim()); return result;
-  };
-  const headers = parseRow(lines[0]).map(h=>h.replace(/^\uFEFF/,'').toLowerCase().trim());
-  // Support both English and Italian (it-IT) Revolut CSV headers
-  const idx = {
-    type:          headers.findIndex(h=>h==='type'||h==='tipo'),
-    completedDate: headers.findIndex(h=>h.includes('completed')||h.includes('completamento')),
-    startedDate:   headers.findIndex(h=>h.includes('started')||h==='date'||h.includes('inizio')),
-    description:   headers.findIndex(h=>h==='description'||h==='descrizione'),
-    amount:        headers.findIndex(h=>h==='amount'||h==='importo'),
-    fee:           headers.findIndex(h=>h==='fee'||h==='costo'),
-    currency:      headers.findIndex(h=>h==='currency'||h==='valuta'),
-    state:         headers.findIndex(h=>h==='state'),
-    balance:       headers.findIndex(h=>h==='balance'||h==='saldo'),
-  };
-
-  // Internal Revolut pocket transfers — excluded from income/expense totals
-  // (crypto pocket moves, invest pocket transfers, FX conversions between pockets)
-  const INTERNAL_TIPOS = new Set(['cambia valuta', 'addebita', 'exchange']);
-  const INTERNAL_DESCS = new Set([
-    'transfer to revolut digital assets europe ltd',
-    'transfer from revolut digital assets europe ltd',
-    'al conto di investimento',
-  ]);
-  const isInternalTx = (tipo, desc) => {
-    return INTERNAL_TIPOS.has((tipo||'').toLowerCase().trim()) ||
-           INTERNAL_DESCS.has((desc||'').toLowerCase().trim());
-  };
-
-  // Smart number parser: handles both Italian (1.234,56) and English (1,234.56) formats
-  const parseSmartNum = (s) => {
-    if (!s) return NaN;
-    s = (s||'').replace(/[^\d.,-]/g, '').trim();
-    if (!s) return NaN;
-    const neg = s.startsWith('-');
-    const abs = s.replace(/^-/, '');
-    let val;
-    // Italian: ends with ,XX (1-2 decimal digits) → thousands sep is dot
-    if (/^\d{1,3}(\.\d{3})+(,\d{1,2})?$/.test(abs)) {
-      val = parseFloat(abs.replace(/\./g, '').replace(',', '.'));
-    // English: ends with .XX (1-2 decimal digits) → thousands sep is comma
-    } else if (/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(abs)) {
-      val = parseFloat(abs.replace(/,/g, ''));
-    // Italian decimal only: 25,30
-    } else if (/^\d+,\d{1,2}$/.test(abs)) {
-      val = parseFloat(abs.replace(',', '.'));
-    } else {
-      val = parseFloat(abs);
-    }
-    return isNaN(val) ? NaN : (neg ? -val : val);
-  };
-  const parseNum = s => parseSmartNum(s) || 0;
-  const parseNumNull = s => { const v = parseSmartNum(s); return isNaN(v) ? null : v; };
-
-  const txs = [];
-  for (let i=1;i<lines.length;i++) {
-    const row = parseRow(lines[i]);
-    if (!row||row.length<3) continue;
-    const get = k => { const j=idx[k]; return j>=0&&j<row.length?row[j]:''; };
-    const state = get('state').toLowerCase();
-    // Accept COMPLETATO (Italian) or COMPLETED (English); skip cancelled/pending
-    if (state && !state.includes('complet')) continue;
-    const amt  = parseNum(get('amount'));
-    const fee  = parseNum(get('fee'));
-    const bal  = parseNumNull(get('balance'));
-    const tipo = get('type');
-    const desc = get('description');
-    // Prefer completed date, fall back to started date
-    const dateStr = get('completedDate')||get('startedDate');
-    let date = null;
-    if (dateStr) { const d=new Date(dateStr); if(!isNaN(d)) date=d; }
-    txs.push({
-      type: tipo,
-      date,
-      dateStr: date?date.toISOString().slice(0,10):'',
-      description: desc,
-      amount: amt,
-      fee,
-      currency: get('currency')||'EUR',
-      balance: bal,
-      internal: isInternalTx(tipo, desc),
-    });
-  }
-  return txs.filter(t=>t.date);
-}
-
-/* ============= REVOLUT PDF LINE PARSER ============= */
-
-// Italian + English month names → 0-based index
-const ALL_MONTHS = {
-  gen:0,feb:1,mar:2,apr:3,mag:4,giu:5,lug:6,ago:7,set:8,ott:9,nov:10,dic:11,
-  jan:0,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,dec:11,
-};
-
-// Matches: "6 mar 2024", "10 gennaio 2025", "14 aug 2025"
-const DATE_RE = /\b(\d{1,2})\s+(gen(?:naio)?|feb(?:braio)?|mar(?:zo)?|apr(?:ile)?|mag(?:gio)?|giu(?:gno)?|lug(?:lio)?|ago(?:sto)?|set(?:tembre)?|ott(?:obre)?|nov(?:embre)?|dic(?:embre)?|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{4})\b/i;
-
-function parseDateIT(d, m, y) {
-  const mon = ALL_MONTHS[m.toLowerCase().slice(0,3)];
-  if (mon === undefined) return null;
-  const date = new Date(parseInt(y), mon, parseInt(d));
-  return isNaN(date.getTime()) ? null : date;
-}
-
-// Parse Italian-locale amount string: "32.144,06" → 32144.06, "9,99" → 9.99
-function parseItAmount(str) {
-  if (!str) return NaN;
-  str = str.replace(/[€$£\s]/g, '').trim();
-  if (!str) return NaN;
-  // Italian thousands-sep: "1.234,56" or "1.234"
-  if (/^\d{1,3}(\.\d{3})+(,\d{1,2})?$/.test(str))
-    return parseFloat(str.replace(/\./g, '').replace(',', '.'));
-  // Italian decimal only: "9,99" or "200,00"
-  if (/^\d+,\d{1,2}$/.test(str))
-    return parseFloat(str.replace(',', '.'));
-  // Plain integer or English decimal
-  return parseFloat(str.replace(/,(?=\d{3})/g, ''));
-}
-
-// Extract all €-suffixed amounts from text (returns plain positive values; caller applies sign)
-function extractAmounts(text) {
-  const re = /(\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?|\d+(?:,\d{1,2})?)€/g;
-  const results = [];
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    const val = parseItAmount(m[1]);
-    if (!isNaN(val) && val >= 0) results.push(val);
-  }
-  return results;
-}
-
-// Filter out PDF header/footer noise lines
-function isNoiseLine(line) {
-  if (!line || line.length < 3) return true;
-  const l = line.toLowerCase();
-  // Table column headers and section headers
-  if (/^(data|descrizione|saldo|totale|prodotto)\b/i.test(line.trim())) return true;
-  return (
-    l.includes('revolut') ||
-    l.includes('generato in data') ||
-    l.includes('konstitucijos') || l.includes('iidraudimas') ||
-    l.includes('banca centrale') || l.includes('garanzia') ||
-    l.includes('denaro in uscita') || l.includes('denaro in entrata') ||
-    l.includes('saldo iniziale') || l.includes('saldo di chiusura') ||
-    l.includes('conto corrente') ||
-    l.includes('imposta di bollo') || l.includes('tasso di credito') ||
-    l.includes('interesse sui') || l.includes('interesse di') ||
-    l.includes('piano standard') || l.includes('piano plus') ||
-    l.includes('piano ultra') ||
-    (l.includes('pagina') && /pagina\s+\d+\s+di\s+\d+/i.test(line)) ||
-    /^[A-Z]{2}\d{2}[A-Z0-9]{10,}$/.test(line.trim()) ||
-    /^[A-Z]{6,11}$/.test(line.trim()) ||
-    /^\+\d[\d\s\-]{4,}$/.test(line.trim()) ||
-    /^\d{6,}$/.test(line.trim()) // bare account numbers
-  );
-}
-
-// ── CORE PARSER: use balance delta as primary sign signal ──────────────────
-// The Revolut PDF table has columns: Date | Description | Outgoing | Incoming | Balance
-// pdf.js flattens this into text lines, so we cannot rely on column position.
-// Instead: parse ALL amounts from the transaction block, identify the RUNNING BALANCE
-// (the largest / last amount that matches the PDF's balance column), then determine
-// sign by comparing consecutive balances.
-
-function parseRevolutLines(lines) {
-  // ── STEP 0: extract summary totals from the PDF "Riepilogo del saldo" table ──
-  // Strategy: find the "Totale" row in the summary table.
-  // In the PDF the summary table has a row: Totale  0,00€  <uscite>€  <entrate>€  0,00€
-  // pdf.js may spread this across 1-3 lines. We collect all lines in a window
-  // around "totale" and extract amounts. The two large middle values are
-  // expense and income (in that order per Revolut layout: "Denaro in uscita" then "Denaro in entrata").
-  //
-  // Also try "Conto (conto corrente)" row as a second pass.
-  let summaryIncome = null;
-  let summaryExpense = null;
-
-  const tryExtractSummary = (idx, windowSize) => {
-    const ctx = lines.slice(idx, idx + windowSize).join(' ');
-    const amounts = extractAmounts(ctx);
-    // Need at least 3 amounts: uscite, entrate, and saldo chiusura (or iniziale)
-    // Filter out obvious 0 values which are saldo iniziale/chiusura
-    const nonZero = amounts.filter(a => a > 0.01);
-    // Expect exactly 2 large matching values (income ≈ expense in a balanced account)
-    // or at minimum 2 values that are clearly not transaction amounts (> 100)
-    if (nonZero.length >= 2) {
-      // In Revolut layout: uscite comes before entrate
-      // Take the first two significant amounts
-      return { expense: nonZero[0], income: nonZero[1] };
-    }
-    return null;
-  };
-
-  // SUM all "Totale" rows found — Revolut PDFs split by period/section,
-  // each with its own Totale. We need the grand total across all sections.
-  let totalExpense = 0, totalIncome = 0, foundAny = false;
-  for (let li = 0; li < lines.length; li++) {
-    const line = lines[li];
-    if (/^totale\b/i.test(line.trim())) {
-      const result = tryExtractSummary(li, 4);
-      if (result && result.expense > 0 && result.income > 0) {
-        totalExpense += result.expense;
-        totalIncome  += result.income;
-        foundAny = true;
-      }
-    }
-  }
-  if (foundAny) {
-    summaryExpense = Math.round(totalExpense * 100) / 100;
-    summaryIncome  = Math.round(totalIncome  * 100) / 100;
-  }
-
-  // Fallback: sum all conto corrente rows
-  if (summaryIncome === null) {
-    for (let li = 0; li < lines.length; li++) {
-      const line = lines[li];
-      if (/conto corrente/i.test(line)) {
-        const result = tryExtractSummary(li, 4);
-        if (result && result.expense > 0 && result.income > 0) {
-          summaryExpense = (summaryExpense || 0) + result.expense;
-          summaryIncome  = (summaryIncome  || 0) + result.income;
-        }
-      }
-    }
-    if (summaryExpense !== null) {
-      summaryExpense = Math.round(summaryExpense * 100) / 100;
-      summaryIncome  = Math.round(summaryIncome  * 100) / 100;
-    }
-  }
-
-  // Log for debugging (remove after fix confirmed)
-  if (typeof console !== 'undefined') {
-    // Also log all lines containing large amounts to help debug
-    const largeAmountLines = lines.filter(l => /\d{1,3}\.\d{3},\d{2}€/.test(l)).slice(0, 20);
-  }
-
-  // ── STEP 1: strip duplicate sections ────────────────────────────────────────
-  // The PDF contains:
-  //   A) Main statement (the actual transactions)
-  //   B) "Condizioni economiche" section that RE-LISTS recent transactions
-  //   C) "In sospeso" section with pending items
-  // We only want section A. We track section boundaries by their header lines.
-  const txLines = [];
-  let inMain = false;       // inside a "Transazioni del conto" section
-  let inBad  = false;       // inside a section we want to skip
-
-  for (const line of lines) {
-    const l = line.toLowerCase();
-    // Markers that start a GOOD section
-    if (/transazioni del conto dal/i.test(line)) {
-      inMain = true; inBad = false; continue;
-    }
-    // Markers that start a BAD section (duplicates / noise)
-    if (
-      /condizioni economiche/i.test(line) ||
-      /in sospeso da/i.test(line) ||
-      /transazioni stornate/i.test(line) ||
-      /altre informazioni/i.test(line) ||
-      /avviso$/i.test(line.trim())
-    ) {
-      inBad = true; inMain = false; continue;
-    }
-    if (inMain && !inBad) txLines.push(line);
-  }
-
-  // If section detection failed, fall back to all lines
-  const workLines = txLines.length > 10 ? txLines : lines;
-  const cleanLines = workLines.filter(l => !isNoiseLine(l));
-
-  // ── STEP 2: group lines into transaction blocks ──────────────────────────────
-  const raw = [];
-  let i = 0;
-  while (i < cleanLines.length) {
-    const line = cleanLines[i];
-    const dm = line.match(DATE_RE);
-    if (!dm) { i++; continue; }
-
-    const date = parseDateIT(dm[1], dm[2], dm[3]);
-    if (!date) { i++; continue; }
-
-    // Collect continuation lines (up to 8, stop at next date)
-    const ctx = [line];
-    for (let j = 1; j <= 8 && i + j < cleanLines.length; j++) {
-      if (cleanLines[i + j].match(DATE_RE)) break;
-      ctx.push(cleanLines[i + j]);
-    }
-    const fullText = ctx.join(' ');
-
-    // Skip pure USD-pocket transactions (no € amount at all).
-    // NOTE: many EUR lines legitimately contain a secondary $ note
-    // e.g. "Al conto di investimento 9,19€  10,00$" — these MUST be kept.
-    // We only skip lines that have NO €-amount whatsoever AND are not a
-    // EUR-conversion line.
-    const hasEuro = /\d[\d.,]*€/.test(fullText);
-    if (!hasEuro && /\b(USD|\$)\b/.test(fullText) && !/conversione in eur/i.test(fullText)) {
-      i += ctx.length; continue;
-    }
-
-    const amounts = extractAmounts(fullText);
-    if (amounts.length === 0) { i += ctx.length; continue; }
-
-    // The RUNNING BALANCE is always the last € amount on the line in Revolut PDFs.
-    // The TRANSACTION AMOUNT is the second-to-last.
-    // When only one amount: that IS the transaction amount (no balance available).
-    const balance   = amounts.length >= 2 ? amounts[amounts.length - 1] : null;
-    const absAmount = amounts.length >= 2 ? amounts[amounts.length - 2] : amounts[0];
-
-    // Sanity: absAmount must be > 0 and not absurdly large (e.g. summary totals)
-    if (absAmount <= 0 || absAmount > 100000) { i += ctx.length; continue; }
-
-    // Clean description
-    let desc = fullText
-      .replace(DATE_RE, '')
-      .replace(/\d{1,3}(?:\.\d{3})*(?:,\d{1,2})?€/g, '')
-      .replace(/Carta:\s*[\d\*]+/ig, '')
-      .replace(/Da:\s*[^\n,]*/ig, '')
-      .replace(/A:\s*[^\n,]*/ig, '')
-      .replace(/Riferimento:\s*[^\n]*/ig, '')
-      .replace(/ID transazione:\s*[\w\-]+/ig, '')
-      .replace(/Tasso Revolut[^\n]*/ig, '')
-      .replace(/\d{1,2},\d{2}\$/g, '')
-      .replace(/\s+/g, ' ').trim();
-
-    raw.push({
-      date,
-      dateStr: date.toISOString().slice(0,10),
-      description: desc || 'Transazione',
-      absAmount,
-      balance,
-      currency: 'EUR',
-    });
-    i += ctx.length;
-  }
-
-  if (raw.length < 3) return [];
-
-  // ── STEP 3: deduplicate ──────────────────────────────────────────────────────
-  // Same (date + amount + first 25 chars of desc) = duplicate
-  const seen = new Set();
-  const unique = [];
-  for (const r of raw) {
-    const key = `${r.dateStr}|${Math.round(r.absAmount*100)}|${r.description.slice(0,25).toLowerCase().replace(/\s/g,'')}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(r);
-  }
-
-  // ── STEP 4: assign sign via balance delta ────────────────────────────────────
-  // Walk chronologically. Balance delta tells us incoming vs outgoing.
-  // Use a generous tolerance (1 %) to absorb rounding, fees and minor discrepancies.
-  // IMPORTANT: do NOT reset prevBal to null when balance ≈ 0 — the account
-  // legitimately reaches near-zero repeatedly; losing the chain causes many
-  // subsequent transactions to be misclassified.
-  const txs = [];
-  let prevBal = null;
-
-  for (const r of unique) {
-    let signedAmount;
-
-    if (r.balance !== null && prevBal !== null) {
-      const delta = r.balance - prevBal;
-      // Tolerance: max of 1 % of absAmount or €0.50 to handle fees/rounding
-      const tol = Math.max(r.absAmount * 0.01, 0.50);
-      if (Math.abs(delta - r.absAmount) <= tol) {
-        signedAmount = r.absAmount;       // incoming
-      } else if (Math.abs(delta + r.absAmount) <= tol) {
-        signedAmount = -r.absAmount;      // outgoing
-      } else {
-        // Multi-tx on same balance snapshot or larger fee mismatch — use keywords
-        signedAmount = guessSign(r.description, r.absAmount);
-      }
-    } else {
-      signedAmount = guessSign(r.description, r.absAmount);
-    }
-
-    // Keep the running balance chain alive even when balance is near zero.
-    if (r.balance !== null) {
-      prevBal = r.balance;
-    }
-
-    txs.push({
-      type: signedAmount >= 0 ? 'TOPUP' : 'PAYMENT',
-      date: r.date,
-      dateStr: r.dateStr,
-      description: r.description,
-      amount: signedAmount,
-      fee: 0,
-      currency: 'EUR',
-      balance: r.balance,
-    });
-  }
-
-  // Attach the PDF summary totals as metadata on the array object
-  // so analyzeTransactions can use them directly.
-  if (summaryIncome !== null)  txs._summaryIncome  = summaryIncome;
-  if (summaryExpense !== null) txs._summaryExpense = summaryExpense;
-
-  return txs;
-}
-
-// Keyword fallback for when balance delta is ambiguous
-function guessSign(text, absAmt) {
-  const t = text.toLowerCase();
-  const isIn = (
-    /ricarica/.test(t) ||
-    /transfer from/.test(t) ||
-    /sell of/.test(t) ||
-    /pagamento da/.test(t) ||
-    /conversione in eur/.test(t) ||
-    /deposito/.test(t) ||
-    /rimborso/.test(t) ||
-    /ricompensa/.test(t) ||
-    /open banking/.test(t) ||
-    /coinbase ireland limited/.test(t) ||
-    /revolut bank uab/.test(t) ||        // incoming bank transfer
-    /\bda:\s/.test(t) ||                 // "Da: NOME" = received from
-    /pagamento da parte di/.test(t) ||
-    /\binps\b/.test(t) ||               // INPS payments are always incoming
-    /\bvisa payments limited\b/.test(t) ||
-    /\btrustly\b/.test(t) ||
-    /\bnomupayvt markets\b.*entrata/.test(t) // refunds from broker
-  );
-  const isOut = (
-    /transfer to/.test(t) ||
-    /purchase of/.test(t) ||
-    /canone piano/.test(t) ||
-    /prelievo/.test(t) ||
-    /al conto di investimento/.test(t) ||
-    /pagamento a favore/.test(t) ||
-    /^to\s/.test(t) ||
-    /\ba:\s/.test(t)                     // "A: NOME" = sent to
-  );
-  if (isIn && !isOut) return absAmt;
-  if (isOut && !isIn) return -absAmt;
-  return -absAmt; // default outgoing
-}
-
-function parseRevolutLinesFallback(lines) {
-  return [];
-}
+/* ===== import PDF/CSV rimosso — ora inserimento manuale ===== */
 
 /* ============= DATA ANALYSIS ============= */
 function analyzeTransactions(txs) {
@@ -727,37 +216,46 @@ function analyzeTransactions(txs) {
   // Priority 3: last resort — sum parser-assigned signs.
   let income, expense;
 
+  // Commissioni: sempre denaro in uscita, sommate a parte (anche quelle sulle conversioni).
+  const totalFees = Math.round(sorted.reduce((s,t) => s + Math.abs(t.fee || 0), 0) * 100) / 100;
+
   if (txs._summaryIncome != null && txs._summaryExpense != null) {
-    // Ground truth from Revolut's own summary table (PDF only)
+    // Import legacy (PDF): totali dal riepilogo Revolut.
     income  = txs._summaryIncome;
     expense = txs._summaryExpense;
   } else {
-    // CSV: use balance delta as ground truth — always exact regardless of
-    // transaction type (handles fees, crypto conversions, internal transfers).
+    // Manuale: entrate = importi positivi, uscite = importi negativi (lordi).
+    // Le conversioni interne sono neutre; le commissioni contano a parte.
     income = 0; expense = 0;
     for (const t of sorted) {
-      const delta = t.amount - Math.abs(t.fee || 0);
-      if (delta > 0) income  += delta;
-      else           expense += Math.abs(delta);
+      if (t.internal) continue;
+      if (t.amount > 0) income  += t.amount;
+      else              expense += Math.abs(t.amount);
     }
     income  = Math.round(income  * 100) / 100;
     expense = Math.round(expense * 100) / 100;
   }
-  const netFlow = Math.round((income - expense) * 100) / 100;
-  // Fees: sum all fee fields (covers Commissione, Addebita, etc.)
-  const totalFees = Math.round(
-    sorted.reduce((s,t) => s + Math.abs(t.fee || 0), 0) * 100
-  ) / 100;
-  const balHistory = sorted.filter(t=>t.balance!=null).map(t=>({date:t.dateStr,balance:t.balance}));
+  // Flusso netto = entrate − uscite − commissioni.
+  const netFlow = Math.round((income - expense - totalFees) * 100) / 100;
+  // Andamento saldo: usa i saldi reali se presenti (import legacy), altrimenti
+  // costruisce un saldo cumulato dai movimenti manuali (le conversioni sono neutre).
+  const hasRealBalance = sorted.some(t=>t.balance!=null);
+  let balHistory;
+  if (hasRealBalance) {
+    balHistory = sorted.filter(t=>t.balance!=null).map(t=>({date:t.dateStr,balance:t.balance}));
+  } else {
+    let run=0; balHistory=[];
+    for (const t of sorted) { run += (t.internal ? 0 : t.amount) - Math.abs(t.fee || 0); balHistory.push({date:t.dateStr,balance:Math.round(run*100)/100}); }
+  }
   const byMonth = {};
   for (const t of sorted) {
     const m = t.dateStr.slice(0, 7);
     if (!byMonth[m]) byMonth[m] = { month: m, income: 0, expense: 0, count: 0, fees: 0 };
-    const delta = t.amount - Math.abs(t.fee || 0);
-    if (delta > 0) byMonth[m].income  += delta;
-    else           byMonth[m].expense += Math.abs(delta);
+    byMonth[m].fees += Math.abs(t.fee || 0);   // commissioni: anche sulle conversioni
+    if (t.internal) continue;                  // entrate/uscite escludono le conversioni
+    if (t.amount > 0) byMonth[m].income  += t.amount;
+    else              byMonth[m].expense += Math.abs(t.amount);
     byMonth[m].count++;
-    byMonth[m].fees += Math.abs(t.fee || 0);
   }
   // Round monthly totals to cents
   for (const m of Object.values(byMonth)) {
@@ -803,9 +301,12 @@ function analyzeTransactions(txs) {
   // Use active expense days (days with at least 1 real expense) for a more accurate daily avg
   const activeDays = new Set(sorted.filter(t=>!t.internal&&t.amount<0).map(t=>t.dateStr)).size;
   const avgDailySpend = activeDays > 0 ? expense / activeDays : expense / days;
+  const curSet = new Set(txs.map(t=>t.currency||'EUR'));
+  for (const t of txs) { if (t.internal) { if (t.fromCur) curSet.add(t.fromCur); if (t.toCur) curSet.add(t.toCur); } }
+  const convCount = txs.filter(t=>t.internal).length;
   return {
-    income,expense,netFlow,totalFees,savingRate:income>0?((income-expense)/income)*100:0,
-    balHistory,monthlyData,categories,currencies:[...new Set(txs.map(t=>t.currency))],
+    income,expense,netFlow,totalFees,savingRate:income>0?(netFlow/income)*100:0,
+    balHistory,monthlyData,categories,currencies:[...curSet],convCount,
     firstDate,lastDate,days,avgDailySpend,
     topMerchants,weeklyData,recurring,totalTxs:txs.filter(t=>!t.internal).length,
     latestBalance:sorted[sorted.length-1].balance,
@@ -843,6 +344,7 @@ const MetricCard = ({C,label,value,sub,color,delay=0}) => (
 );
 /* ============= SHARED CATEGORIZE ============= */
 function categorizeTx(t) {
+  if (t.category) return t.category;   // transazioni manuali: categoria esplicita
   const desc = (t.description + ' ' + (t.type||'')).toLowerCase();
   if (/nomupay|nomupayvt|mexc|mexc global|kraken|ftmo|axicorp|axitrader|bybit|binance|coinbase|forex|cfd|trading|broker|invest|spherenode|not ltd/i.test(desc)) return 'Investimenti';
   if (/amazon(?! prime)|shop|acquist|mercato|market|aliexpress|ebay|zalando|fashion|h&m|zara|galaxus/i.test(desc)) return 'Shopping';
@@ -929,7 +431,7 @@ function OverviewPage({C,data,txs}) {
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
         <MetricCard C={C} label="Entrate" value={fmt.currency(d.income,cur)} color={C.green} delay={0}/>
         <MetricCard C={C} label="Uscite" value={fmt.currency(d.expense,cur)} color={C.red} delay={1}/>
-        <MetricCard C={C} label="Saving Rate" value={fmt.pct(d.savingRate)} color={d.savingRate>0?C.cyan:C.orange} delay={2} sub="(entrate−uscite)/entrate"/>
+        <MetricCard C={C} label="Saving Rate" value={fmt.pct(d.savingRate)} color={d.savingRate>0?C.cyan:C.orange} delay={2}/>
         <MetricCard C={C} label="Spesa/giorno" value={fmt.currency(d.avgDailySpend,cur)} color={C.orange} delay={3}/>
       </div>
       {d.balHistory.length>1&&(
@@ -965,12 +467,18 @@ function OverviewPage({C,data,txs}) {
         </Glass>
       )}
       <Glass C={C}>
-        {[{label:'Transazioni totali',val:d.totalTxs.toString()},{label:'Commissioni pagate',val:fmt.currency(d.totalFees,cur),color:C.orange},{label:'Valute',val:d.currencies.join(', ')}].map((r,i)=>(
-          <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingBottom:i<2?'12px':0,borderBottom:i<2?`0.5px solid ${C.sep}`:'none',marginBottom:i<2?12:0}}>
-            <span style={{color:C.secondary,fontSize:13,fontFamily:FONT.text}}>{r.label}</span>
-            <span style={{color:r.color||C.primary,fontSize:13,fontFamily:FONT.mono,fontWeight:600}}>{r.val}</span>
-          </div>
-        ))}
+        {(()=>{
+          const rows=[{label:'Transazioni totali',val:d.totalTxs.toString()}];
+          if(d.convCount>0) rows.push({label:'Conversioni valuta',val:d.convCount.toString(),color:C.cyan});
+          if(d.totalFees>0) rows.push({label:'Commissioni pagate',val:fmt.currency(d.totalFees,cur),color:C.orange});
+          rows.push({label:'Valute',val:d.currencies.join(', ')});
+          return rows.map((r,i)=>(
+            <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingBottom:i<rows.length-1?'12px':0,borderBottom:i<rows.length-1?`0.5px solid ${C.sep}`:'none',marginBottom:i<rows.length-1?12:0}}>
+              <span style={{color:C.secondary,fontSize:13,fontFamily:FONT.text}}>{r.label}</span>
+              <span style={{color:r.color||C.primary,fontSize:13,fontFamily:FONT.mono,fontWeight:600}}>{r.val}</span>
+            </div>
+          ));
+        })()}
       </Glass>
     </div>
   );
@@ -1107,8 +615,218 @@ function SpesePage({C,data,txs}) {
   );
 }
 
+/* ============= INSERIMENTO MANUALE ============= */
+// Categorie coerenti con categorizeTx (uscite) + set entrate.
+const EXPENSE_CATS = ['Cibo & Ristoranti','Shopping','Abbonamenti','Trasporti','Utenze','Affitto','Salute','Viaggi','Investimenti','Contanti','Trasferimenti','Altro'];
+const INCOME_CATS  = ['Stipendio','Rimborso','Investimenti','Vendita','Regalo','Altro'];
+const CURRENCIES   = ['EUR','USD','USDC','GBP','CHF'];
+
+// Campo del form (top-level = tipo stabile, niente remount/perdita focus).
+const AtField = ({C,label,children}) => (
+  <div>
+    <div style={{color:C.tertiary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:8}}>{label}</div>
+    {children}
+  </div>
+);
+
+function AddTransactionModal({C,open,onClose,accounts=[],activeAccountId,editTx=null,onAdd,onUpdate,onDelete}) {
+  const ALL_ID='__all__';
+  const pickDefaultAcc=()=> activeAccountId && activeAccountId!==ALL_ID ? activeAccountId : (accounts[0]?.id||null);
+  const todayStr=()=>{ const d=new Date(); const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; };
+  const accountOfTx=(id)=> accounts.find(a=>(a.rawTxs||[]).some(t=>t.id===id))?.id;
+  const numToInput=(n)=> n==null?'':String(n).replace('.',',');
+
+  const [type,setType]=useState('out');            // 'in' | 'out' | 'transfer'
+  const [amount,setAmount]=useState('');
+  const [fee,setFee]=useState('');
+  const [cat,setCat]=useState(EXPENSE_CATS[0]);
+  const [desc,setDesc]=useState('');
+  const [dateStr,setDateStr]=useState(todayStr);
+  const [accId,setAccId]=useState(pickDefaultAcc);
+  const [fromCur,setFromCur]=useState('EUR');
+  const [toCur,setToCur]=useState('USD');
+
+  useEffect(()=>{
+    if(!open) return;
+    if(editTx){
+      const et = editTx.internal ? 'transfer' : (editTx.amount>0?'in':'out');
+      setType(et);
+      setAmount(numToInput(Math.abs(editTx.amount)));
+      setFee(editTx.fee ? numToInput(Math.abs(editTx.fee)) : '');
+      setDateStr(editTx.dateStr || todayStr());
+      setAccId(accountOfTx(editTx.id) || pickDefaultAcc());
+      setFromCur(editTx.fromCur || 'EUR');
+      setToCur(editTx.toCur || 'USD');
+      setCat(et==='transfer' ? EXPENSE_CATS[0] : (editTx.category || (et==='in'?INCOME_CATS[0]:EXPENSE_CATS[0])));
+      const auto = editTx.description===editTx.type || (editTx.fromCur && editTx.description===`${editTx.fromCur} → ${editTx.toCur}`);
+      setDesc(auto ? '' : (editTx.description||''));
+    } else {
+      setType('out'); setAmount(''); setFee(''); setCat(EXPENSE_CATS[0]); setDesc('');
+      setDateStr(todayStr()); setAccId(pickDefaultAcc()); setFromCur('EUR'); setToCur('USD');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[open,editTx]);
+
+  if(!open) return null;
+
+  const parseAmt=(s)=>{ const v=parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')); return isNaN(v)?NaN:v; };
+  const amt=parseAmt(amount);
+  const valid=!isNaN(amt)&&amt>0&&!!accId;
+  const cats=type==='in'?INCOME_CATS:EXPENSE_CATS;
+  const typeColor=type==='in'?C.green:type==='out'?C.red:C.cyan;
+
+  const feeVal = Math.max(0, Math.round((parseAmt(fee)||0)*100)/100);
+  const save=()=>{
+    if(!valid){ haptic.error(); return; }
+    const abs=Math.round(amt*100)/100;
+    let signed, internal, category, typeLabel;
+    if(type==='in'){ signed=abs; internal=false; category=cat; typeLabel='Entrata'; }
+    else if(type==='out'){ signed=-abs; internal=false; category=cat; typeLabel='Uscita'; }
+    else { internal=true; category='Conversioni'; typeLabel='Conversione'; signed=-abs; }
+    const [y,m,dd]=dateStr.split('-').map(Number);
+    const date=new Date(y||2000,(m||1)-1,dd||1,12,0,0);
+    const defDesc = type==='transfer' ? `${fromCur} → ${toCur}` : typeLabel;
+    const tx={
+      id: editTx ? editTx.id : ('tx_'+Date.now()+'_'+Math.random().toString(36).slice(2,7)),
+      type:typeLabel, date, dateStr,
+      description:desc.trim()||defDesc,
+      amount:signed, fee:feeVal, currency:'EUR', balance:null,
+      internal, category, manual:true,
+      ...(type==='transfer'?{fromCur,toCur}:{}),
+    };
+    if(editTx) onUpdate?.(editTx.id, accId, tx); else onAdd?.(accId, tx);
+    haptic.success(); onClose();
+  };
+  const removeTx=()=>{
+    if(!editTx) return;
+    if(typeof window!=='undefined' && window.confirm('Eliminare questa transazione?')){ onDelete?.(editTx.id); haptic.medium(); onClose(); }
+  };
+
+  const TYPES=[{id:'in',label:'Entrata',col:C.green},{id:'out',label:'Uscita',col:C.red},{id:'transfer',label:'Conversione',col:C.cyan}];
+
+  return (
+    <div style={{position:'fixed',inset:0,zIndex:210,display:'flex',flexDirection:'column',justifyContent:'flex-end'}}>
+      <div onClick={onClose} style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.55)',backdropFilter:'blur(4px)'}}/>
+      <div className="rv-card" style={{
+        position:'relative',zIndex:1,
+        background:C.glass,backdropFilter:'blur(40px)',WebkitBackdropFilter:'blur(40px)',
+        borderRadius:'28px 28px 0 0',border:`0.5px solid ${C.sep2}`,
+        maxHeight:'90vh',overflowY:'auto',paddingBottom:'env(safe-area-inset-bottom,0px)',
+      }}>
+        <div style={{display:'flex',justifyContent:'center',padding:'12px 0 4px'}}>
+          <div style={{width:36,height:4,borderRadius:2,background:C.glass3}}/>
+        </div>
+        <div style={{padding:'0 20px 24px',display:'flex',flexDirection:'column',gap:18}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <span style={{color:C.primary,fontSize:17,fontFamily:FONT.display,fontWeight:700,letterSpacing:'-0.3px'}}>{editTx?'Modifica transazione':'Nuova transazione'}</span>
+            <button onClick={onClose} className="rv-btn" style={{width:30,height:30,borderRadius:15,background:C.glass2,border:`0.5px solid ${C.sep}`,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M18 6 6 18M6 6l12 12" stroke={C.secondary} strokeWidth="2.5" strokeLinecap="round"/></svg>
+            </button>
+          </div>
+
+          {/* Tipo */}
+          <div style={{display:'flex',background:C.glass2,borderRadius:RADIUS.pill,padding:3,gap:2}}>
+            {TYPES.map(o=>(
+              <button key={o.id} onClick={()=>{setType(o.id);haptic.selection();setCat(o.id==='in'?INCOME_CATS[0]:EXPENSE_CATS[0]);}} className="rv-btn rv-seg-pill" style={{flex:1,padding:'8px 6px',fontSize:12,fontFamily:FONT.text,fontWeight:600,border:'none',cursor:'pointer',borderRadius:RADIUS.pill,background:type===o.id?o.col:'transparent',color:type===o.id?C.bg:C.secondary}}>{o.label}</button>
+            ))}
+          </div>
+
+          {/* Importo */}
+          <AtField C={C} label="Importo">
+            <div style={{display:'flex',alignItems:'center',gap:8,padding:'12px 16px',background:C.glass2,border:`0.5px solid ${typeColor}45`,borderRadius:RADIUS.inset}}>
+              <span style={{color:typeColor,fontSize:26,fontFamily:FONT.display,fontWeight:700}}>€</span>
+              <input inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0,00" autoFocus style={{flex:1,minWidth:0,background:'transparent',border:'none',outline:'none',color:C.primary,fontSize:26,fontFamily:FONT.display,fontWeight:700,letterSpacing:'-0.5px',fontVariantNumeric:'tabular-nums'}}/>
+            </div>
+          </AtField>
+
+          {/* Commissione (facoltativa) */}
+          <AtField C={C} label="Commissione (facoltativa)">
+            <div style={{display:'flex',alignItems:'center',gap:8,padding:'10px 14px',background:C.glass2,border:`0.5px solid ${C.sep2}`,borderRadius:RADIUS.inset}}>
+              <span style={{color:C.tertiary,fontSize:16,fontFamily:FONT.display,fontWeight:700}}>€</span>
+              <input inputMode="decimal" value={fee} onChange={e=>setFee(e.target.value)} placeholder="0,00" style={{flex:1,minWidth:0,background:'transparent',border:'none',outline:'none',color:C.primary,fontSize:16,fontFamily:FONT.mono,fontWeight:600,fontVariantNumeric:'tabular-nums'}}/>
+              {type==='transfer'&&<span style={{color:C.tertiary,fontSize:10,fontFamily:FONT.text,flexShrink:0}}>spread / fee cambio</span>}
+            </div>
+          </AtField>
+
+          {/* Conversione: valuta di origine → destinazione */}
+          {type==='transfer'&&(
+            <AtField C={C} label="Conversione valuta">
+              <div style={{display:'flex',alignItems:'flex-start',gap:10}}>
+                <div style={{flex:1}}>
+                  <div style={{color:C.tertiary,fontSize:9,fontFamily:FONT.mono,marginBottom:5,textTransform:'uppercase',letterSpacing:'0.4px'}}>Da</div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                    {CURRENCIES.map(cu=>(
+                      <button key={cu} onClick={()=>{setFromCur(cu);haptic.light();}} className="rv-btn" style={{padding:'6px 10px',fontSize:11,fontFamily:FONT.mono,fontWeight:700,borderRadius:RADIUS.pill,border:`0.5px solid ${fromCur===cu?C.cyan:C.sep}`,background:fromCur===cu?`${C.cyan}22`:C.glass2,color:fromCur===cu?C.cyan:C.secondary,cursor:'pointer'}}>{cu}</button>
+                    ))}
+                  </div>
+                </div>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style={{flexShrink:0,marginTop:18}}><path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4" stroke={C.cyan} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                <div style={{flex:1}}>
+                  <div style={{color:C.tertiary,fontSize:9,fontFamily:FONT.mono,marginBottom:5,textTransform:'uppercase',letterSpacing:'0.4px'}}>A</div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                    {CURRENCIES.map(cu=>(
+                      <button key={cu} onClick={()=>{setToCur(cu);haptic.light();}} className="rv-btn" style={{padding:'6px 10px',fontSize:11,fontFamily:FONT.mono,fontWeight:700,borderRadius:RADIUS.pill,border:`0.5px solid ${toCur===cu?C.cyan:C.sep}`,background:toCur===cu?`${C.cyan}22`:C.glass2,color:toCur===cu?C.cyan:C.secondary,cursor:'pointer'}}>{cu}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div style={{color:C.tertiary,fontSize:10,fontFamily:FONT.text,marginTop:10,lineHeight:1.4}}>La conversione è neutra: non conta come entrata né come uscita.</div>
+            </AtField>
+          )}
+
+          {/* Categoria (entrata/uscita) */}
+          {type!=='transfer'&&(
+            <AtField C={C} label="Categoria">
+              <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+                {cats.map(c=>(
+                  <button key={c} onClick={()=>{setCat(c);haptic.light();}} className="rv-btn" style={{padding:'7px 12px',fontSize:12,fontFamily:FONT.text,fontWeight:600,borderRadius:RADIUS.pill,border:`0.5px solid ${cat===c?typeColor:C.sep}`,background:cat===c?`${typeColor}22`:C.glass2,color:cat===c?typeColor:C.secondary,cursor:'pointer'}}>{c}</button>
+                ))}
+              </div>
+            </AtField>
+          )}
+
+          {/* Descrizione */}
+          <AtField C={C} label={type==='transfer'?'Nota':'Descrizione'}>
+            <input value={desc} onChange={e=>setDesc(e.target.value)} placeholder={type==='in'?'Es. Stipendio, cliente...':type==='out'?'Es. Esselunga, Amazon...':'Facoltativa — es. cambio su Revolut'} style={{width:'100%',boxSizing:'border-box',padding:'11px 14px',background:C.glass2,border:`0.5px solid ${C.sep2}`,borderRadius:RADIUS.inset,color:C.primary,fontSize:14,fontFamily:FONT.text,outline:'none'}}/>
+          </AtField>
+
+          {/* Data */}
+          <AtField C={C} label="Data">
+            <input type="date" value={dateStr} onChange={e=>setDateStr(e.target.value)} style={{width:'100%',boxSizing:'border-box',padding:'11px 14px',background:C.glass2,border:`0.5px solid ${C.sep2}`,borderRadius:RADIUS.inset,color:C.primary,fontSize:14,fontFamily:FONT.mono,outline:'none',colorScheme:C.scheme}}/>
+          </AtField>
+
+          {/* Conto (solo se piu' di uno) */}
+          {accounts.length>1&&(
+            <AtField C={C} label="Conto">
+              <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+                {accounts.map(a=>(
+                  <button key={a.id} onClick={()=>{setAccId(a.id);haptic.light();}} className="rv-btn" style={{display:'flex',alignItems:'center',gap:6,padding:'7px 12px',fontSize:12,fontFamily:FONT.text,fontWeight:600,borderRadius:RADIUS.pill,border:`0.5px solid ${accId===a.id?a.color:C.sep}`,background:accId===a.id?`${a.color}20`:C.glass2,color:accId===a.id?C.primary:C.secondary,cursor:'pointer'}}>
+                    <div style={{width:8,height:8,borderRadius:4,background:a.color}}/>{a.name}
+                  </button>
+                ))}
+              </div>
+            </AtField>
+          )}
+
+          <button onClick={save} disabled={!valid} className="rv-btn" style={{padding:'13px',background:valid?typeColor:C.glass3,border:'none',borderRadius:RADIUS.pill,cursor:valid?'pointer':'default',color:valid?C.bg:C.tertiary,fontSize:15,fontFamily:FONT.text,fontWeight:700,letterSpacing:'-0.2px'}}>
+            {editTx?'Salva modifiche':(type==='in'?'Aggiungi entrata':type==='out'?'Aggiungi uscita':'Aggiungi conversione')}
+          </button>
+          {editTx&&(
+            <button onClick={removeTx} className="rv-btn" style={{padding:'11px',background:'transparent',border:`0.5px solid ${C.red}40`,borderRadius:RADIUS.pill,cursor:'pointer',color:C.red,fontSize:13,fontFamily:FONT.text,fontWeight:600,display:'flex',alignItems:'center',justifyContent:'center',gap:6}}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m2 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6" stroke={C.red} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              Elimina transazione
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ============= MOVIMENTI ============= */
-function MovimentiPage({C,txs}) {
+function MovimentiPage({C,txs,accounts=[],activeAccountId,onAddTransaction,onUpdateTransaction,onDeleteTransaction}) {
+  const [showAdd,setShowAdd]=useState(false);
+  const [editTx,setEditTx]=useState(null);
   const [filter,setFilter]=useState('all');
   const [period,setPeriod]=useState('all');
   const [customFrom,setCustomFrom]=useState('');
@@ -1139,8 +857,9 @@ function MovimentiPage({C,txs}) {
   const [prevFiltered, setPrevFiltered] = useState(filtered);
   if (filtered !== prevFiltered) { setPrevFiltered(filtered); setVisible(40); }
 
-  const totalIn=filtered.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0);
-  const totalOut=filtered.filter(t=>t.amount<0).reduce((s,t)=>s+Math.abs(t.amount),0);
+  // Escludi le conversioni (interne) dai totali dei box, per coerenza con Home/Analisi.
+  const totalIn=filtered.filter(t=>t.amount>0&&!t.internal).reduce((s,t)=>s+t.amount,0);
+  const totalOut=filtered.filter(t=>t.amount<0&&!t.internal).reduce((s,t)=>s+Math.abs(t.amount),0);
 
   return (
     <div className="rv-page" style={{padding:'0 16px 24px',display:'flex',flexDirection:'column',gap:12}}>
@@ -1168,6 +887,17 @@ function MovimentiPage({C,txs}) {
           ))}
         </div>
       )}
+      {/* Aggiungi transazione — sempre visibile, sopra i box entrate/uscite */}
+      <button onClick={()=>{setEditTx(null);setShowAdd(true);haptic.medium();}} className="rv-btn" style={{
+        width:'100%',display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+        padding:'12px 0',border:'none',borderRadius:RADIUS.pill,cursor:'pointer',
+        background:`linear-gradient(135deg, ${C.green}, ${C.cyan})`,
+        color:'#001A10',fontSize:14,fontFamily:FONT.text,fontWeight:700,letterSpacing:'-0.2px',
+        boxShadow:C.scheme==='dark'?`0 6px 20px ${C.cyan}33`:'none',
+      }}>
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="#001A10" strokeWidth="2.6" strokeLinecap="round"/></svg>
+        Aggiungi transazione
+      </button>
       {/* Summary */}
       {filtered.length>0&&(
         <div style={{display:'flex',gap:8}}>
@@ -1188,19 +918,24 @@ function MovimentiPage({C,txs}) {
             const isLast=i===Math.min(visible,filtered.length)-1;
             const amtColor=t.amount>=0?C.green:t.internal?C.tertiary:C.red;
             const cat=t.amount<0&&!t.internal?categorizeTx(t):null;
+            const canEdit=t.id&&onUpdateTransaction;
             return (
-              <div key={i} className="rv-row" style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 18px',borderBottom:!isLast?`0.5px solid ${C.sep}`:'none',opacity:t.internal?0.6:1}}>
+              <div key={t.id||i} className="rv-row" onClick={canEdit?()=>{setEditTx(t);setShowAdd(true);haptic.light();}:undefined} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 18px',borderBottom:!isLast?`0.5px solid ${C.sep}`:'none',opacity:t.internal?0.6:1,cursor:canEdit?'pointer':'default'}}>
                 <div style={{flex:1,marginRight:12}}>
                   <div style={{color:C.primary,fontSize:13,fontFamily:FONT.text,fontWeight:500,marginBottom:2}}>{t.description||t.type||'Transazione'}</div>
                   <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
                     <span style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono}}>{t.date?.toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'2-digit'})}</span>
                     {t.type&&<span style={{fontSize:9,fontFamily:FONT.text,fontWeight:600,color:C.tertiary,padding:'1px 6px',background:C.glass3,borderRadius:RADIUS.pill,textTransform:'uppercase',letterSpacing:'0.3px'}}>{t.type}</span>}
                     {cat&&<span style={{fontSize:9,fontFamily:FONT.text,fontWeight:600,color:C.purple,padding:'1px 6px',background:`${C.purple}18`,borderRadius:RADIUS.pill}}>{cat}</span>}
+                    {t.fee>0&&<span style={{fontSize:9,fontFamily:FONT.mono,fontWeight:600,color:C.orange,padding:'1px 6px',background:`${C.orange}18`,borderRadius:RADIUS.pill}}>fee {fmt.currency(t.fee,cur)}</span>}
                   </div>
                 </div>
-                <div style={{textAlign:'right'}}>
-                  <div style={{color:amtColor,fontSize:14,fontFamily:FONT.mono,fontWeight:700,fontVariantNumeric:'tabular-nums',...neonText(amtColor,C.scheme)}}>{t.amount>=0?'+':''}{fmt.currency(t.amount,cur)}</div>
-                  {t.balance!=null&&<div style={{color:C.tertiary,fontSize:9,fontFamily:FONT.mono,marginTop:2}}>= {fmt.currency(t.balance,cur)}</div>}
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <div style={{textAlign:'right'}}>
+                    <div style={{color:amtColor,fontSize:14,fontFamily:FONT.mono,fontWeight:700,fontVariantNumeric:'tabular-nums',...neonText(amtColor,C.scheme)}}>{t.amount>=0?'+':''}{fmt.currency(t.amount,cur)}</div>
+                    {t.balance!=null&&<div style={{color:C.tertiary,fontSize:9,fontFamily:FONT.mono,marginTop:2}}>= {fmt.currency(t.balance,cur)}</div>}
+                  </div>
+                  {canEdit&&<svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{flexShrink:0,opacity:0.35}}><path d="M9 6l6 6-6 6" stroke={C.tertiary} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                 </div>
               </div>
             );
@@ -1215,12 +950,14 @@ function MovimentiPage({C,txs}) {
           {filtered.length===0&&(
             <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'36px 16px'}}>
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke={C.sep2} strokeWidth="1.8"/><path d="m21 21-4.35-4.35" stroke={C.sep2} strokeWidth="1.8" strokeLinecap="round"/></svg>
-              <div style={{color:C.secondary,fontSize:14,fontFamily:FONT.text,fontWeight:600}}>Nessuna transazione trovata</div>
-              <div style={{color:C.tertiary,fontSize:12,fontFamily:FONT.text,textAlign:'center',lineHeight:1.5}}>Prova a cambiare periodo o filtri.</div>
+              <div style={{color:C.secondary,fontSize:14,fontFamily:FONT.text,fontWeight:600}}>Nessuna transazione</div>
+              <div style={{color:C.tertiary,fontSize:12,fontFamily:FONT.text,textAlign:'center',lineHeight:1.5}}>Tocca <span style={{color:C.cyan,fontWeight:600}}>Aggiungi transazione</span> per inserire il primo movimento.</div>
             </div>
           )}
         </div>
       </Glass>
+
+      <AddTransactionModal C={C} open={showAdd} editTx={editTx} onClose={()=>{setShowAdd(false);setEditTx(null);}} accounts={accounts} activeAccountId={activeAccountId} onAdd={onAddTransaction} onUpdate={onUpdateTransaction} onDelete={onDeleteTransaction}/>
     </div>
   );
 }
@@ -1244,23 +981,25 @@ function AIPage({C,data,txs,setInputFocused,input,setInput,send,inputRef}) {
   const scrollRef=useRef(null);
   const cur=txs[0]?.currency||'EUR';
 
-  const buildContext=useMemo(()=>!data?'':
-    `Sei un consulente finanziario esperto che analizza i dati bancari Revolut dell'utente.
+  const buildContext=useMemo(()=>{
+    if(!data) return `Sei l'assistente finanziario personale dell'app HomeBanking di Emanuele. Emanuele inserisce manualmente le proprie transazioni (entrate, uscite e conversioni di valuta, es. EUR↔USD o USDC→EUR). Al momento non c'è ancora nessuna transazione inserita: invita gentilmente Emanuele ad aggiungere i suoi movimenti dalla scheda "Storico", con il pulsante "Aggiungi transazione", e spiega brevemente cosa potrai analizzare quando i dati saranno presenti (spese per categoria, tasso di risparmio, andamento mensile, ecc.). Rispondi sempre in italiano, conciso e diretto.`;
+    return `Sei l'assistente finanziario personale esperto dell'app HomeBanking. Analizzi i dati che Emanuele inserisce MANUALMENTE nell'app: ogni movimento è un'entrata, un'uscita o una conversione di valuta. Le conversioni di valuta (es. EUR↔USD, USDC→EUR) sono neutre e NON contano come entrate né come uscite. Le uscite sono classificate per categoria (es. Cibo & Ristoranti, Shopping, Abbonamenti, Trasporti, Utenze, Affitto, Salute, Viaggi, Investimenti, Contanti, Trasferimenti, Altro).
 Dati finanziari:
 - Periodo: ${fmt.date(data.firstDate)} → ${fmt.date(data.lastDate)} (${data.days} giorni)
-- Saldo attuale: ${data.latestBalance!=null?fmt.currency(data.latestBalance,cur):'N/D'}
+- Saldo netto (entrate − uscite − commissioni): ${data.latestBalance!=null?fmt.currency(data.latestBalance,cur):fmt.currency(data.netFlow,cur)}
 - Entrate totali: ${fmt.currency(data.income,cur)}
 - Uscite totali: ${fmt.currency(data.expense,cur)}
+- Commissioni pagate: ${fmt.currency(data.totalFees,cur)}
+- Conversioni valuta: ${data.convCount}
 - Flusso netto: ${fmt.currency(data.netFlow,cur)}
 - Tasso di risparmio: ${fmt.pct(data.savingRate)}
 - Spesa giornaliera media: ${fmt.currency(data.avgDailySpend,cur)}
-- Commissioni pagate: ${fmt.currency(data.totalFees,cur)}
 - Totale transazioni: ${data.totalTxs}
-- Categorie di spesa: ${(data.categories||[]).slice(0,6).map(c=>`${c.name}: ${fmt.currency(c.amount,cur)}`).join(', ')}
-- Top commercianti: ${(data.topMerchants||[]).slice(0,5).map(m=>`${m.name} (${fmt.currency(m.total,cur)}, ${m.count}x)`).join(', ')}
+- Spesa per categoria: ${(data.categories||[]).slice(0,8).map(c=>`${c.name}: ${fmt.currency(c.amount,cur)}`).join(', ')}
+- Voci di spesa principali: ${(data.topMerchants||[]).slice(0,5).map(m=>`${m.name} (${fmt.currency(m.total,cur)}, ${m.count}x)`).join(', ')}
 - Mesi analizzati: ${(data.monthlyData||[]).length}
-Rispondi sempre in italiano, conciso e diretto. Rispondi a QUALSIASI domanda di Emanuele, inclusi consigli concreti e pratici su budget, risparmio, spese, commissioni e gestione del denaro: dai indicazioni schiette e azionabili senza disclaimer ripetuti. Emanuele e' adulto e consapevole, decide da solo. Usa SOLO i numeri reali qui sopra: non inventare dati, se manca qualcosa dillo.`
-  ,[data,cur]);
+Rispondi sempre in italiano, conciso e diretto. Rispondi a QUALSIASI domanda di Emanuele, inclusi consigli concreti e pratici su budget, risparmio, spese e gestione del denaro: dai indicazioni schiette e azionabili senza disclaimer ripetuti. Emanuele è adulto e consapevole, decide da solo. Usa SOLO i numeri reali qui sopra: non inventare dati, se manca qualcosa dillo.`;
+  },[data,cur]);
 
   useEffect(()=>{ if(scrollRef.current) scrollRef.current.scrollTop=scrollRef.current.scrollHeight; },[messages,loading]);
 
@@ -1323,7 +1062,7 @@ Rispondi sempre in italiano, conciso e diretto. Rispondi a QUALSIASI domanda di 
               </div>
               <div>
                 <div style={{color:C.primary,fontSize:16,fontFamily:FONT.display,fontWeight:700,letterSpacing:'-0.3px',marginBottom:4}}>Chiedimi qualunque cosa</div>
-                <div style={{color:C.tertiary,fontSize:12,fontFamily:FONT.text,lineHeight:1.5,maxWidth:280}}>Ho accesso completo ai tuoi movimenti Revolut. Rispondo descrivendo i dati.</div>
+                <div style={{color:C.tertiary,fontSize:12,fontFamily:FONT.text,lineHeight:1.5,maxWidth:280}}>Ho accesso ai tuoi movimenti inseriti manualmente e ti aiuto ad analizzarli.</div>
               </div>
               <div style={{display:'flex',flexWrap:'wrap',gap:8,justifyContent:'center',marginTop:4}}>
                 {SUGG.map((s,i)=>(
@@ -1406,13 +1145,13 @@ function AnalyticsPage({C,data,txs}) {
         <Glass C={C}>
           <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:12}}>Saving Rate Mensile</div>
           <ResponsiveContainer width="100%" height={120}>
-            <BarChart data={(d.monthlyData||[]).slice(-14).map(m=>({...m,sr:m.income>0?((m.income-m.expense)/m.income)*100:0}))} margin={{left:-10,right:0,top:4,bottom:0}}>
+            <BarChart data={(d.monthlyData||[]).slice(-14).map(m=>({...m,sr:m.income>0?((m.income-m.expense-(m.fees||0))/m.income)*100:0}))} margin={{left:-10,right:0,top:4,bottom:0}}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.sep} vertical={false}/>
               <XAxis dataKey="month" tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={fmt.monthLabel}/>
               <YAxis tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={v=>`${v.toFixed(0)}%`}/>
               <ReferenceLine y={0} stroke={C.sep2}/>
               <Bar dataKey="sr" radius={[4,4,0,0]} maxBarSize={24}>
-                {(d.monthlyData||[]).slice(-14).map((m,i)=>{const sr=m.income>0?((m.income-m.expense)/m.income)*100:0;return <Cell key={i} fill={sr>=0?C.green:C.red} opacity={0.85}/>;}) }
+                {(d.monthlyData||[]).slice(-14).map((m,i)=>{const sr=m.income>0?((m.income-m.expense-(m.fees||0))/m.income)*100:0;return <Cell key={i} fill={sr>=0?C.green:C.red} opacity={0.85}/>;}) }
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -1438,7 +1177,7 @@ function AnalyticsPage({C,data,txs}) {
       {!showWeekly&&(d.monthlyData||[]).length>0&&(
         <Glass C={C} padding="">
           <div style={{padding:'14px 18px 4px'}}><div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px'}}>Dettaglio Mensile</div></div>
-          {(d.monthlyData||[]).slice().reverse().map((m,i)=>{const net=m.income-m.expense;const nc=net>=0?C.green:C.red;return(
+          {(d.monthlyData||[]).slice().reverse().map((m,i)=>{const net=m.income-m.expense-(m.fees||0);const nc=net>=0?C.green:C.red;return(
             <div key={m.month} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'10px 18px',borderBottom:i<(d.monthlyData.length-1)?`0.5px solid ${C.sep}`:'none'}}>
               <span style={{color:C.primary,fontSize:13,fontFamily:FONT.mono,fontWeight:500,width:60}}>{fmt.monthLabel(m.month)}</span>
               <div style={{display:'flex',gap:12,alignItems:'center'}}>
@@ -1455,286 +1194,7 @@ function AnalyticsPage({C,data,txs}) {
   );
 }
 
-/* ============= UPLOAD SCREEN ============= */
-/* ============= iCLOUD PDFCSV FOLDER WATCH ============= */
-// Persisted directory handle key
-const DIR_HANDLE_KEY = 'hb_pdfcsv_dir';
-
-async function saveDirectoryHandle(handle) {
-  try {
-    const db = await openHandleDB();
-    return new Promise((res, rej) => {
-      const tx = db.transaction('handles', 'readwrite');
-      tx.objectStore('handles').put(handle, DIR_HANDLE_KEY);
-      tx.oncomplete = () => res(true);
-      tx.onerror = () => rej(tx.error);
-    });
-  } catch { return false; }
-}
-
-async function loadDirectoryHandle() {
-  try {
-    const db = await openHandleDB();
-    return new Promise((res) => {
-      const tx = db.transaction('handles', 'readonly');
-      const req = tx.objectStore('handles').get(DIR_HANDLE_KEY);
-      req.onsuccess = () => res(req.result || null);
-      req.onerror = () => res(null);
-    });
-  } catch { return null; }
-}
-
-function openHandleDB() {
-  return new Promise((res, rej) => {
-    const req = indexedDB.open('hb_handles', 1);
-    req.onupgradeneeded = e => e.target.result.createObjectStore('handles');
-    req.onsuccess = e => res(e.target.result);
-    req.onerror = () => rej(req.error);
-  });
-}
-
-async function getNewestFile(dirHandle) {
-  let newest = null;
-  let newestTime = 0;
-  for await (const [name, handle] of dirHandle.entries()) {
-    if (handle.kind !== 'file') continue;
-    if (!name.endsWith('.csv') && !name.endsWith('.pdf')) continue;
-    const file = await handle.getFile();
-    if (file.lastModified > newestTime) {
-      newestTime = file.lastModified;
-      newest = file;
-    }
-  }
-  return newest;
-}
-
-function UploadScreen({C,onLoad,accountName}) {
-  const [dragging,setDragging]=useState(false);
-  const [error,setError]=useState('');
-  const [loading,setLoading]=useState(false);
-  const [progress,setProgress]=useState(0);
-  const [watchStatus,setWatchStatus]=useState('idle'); // idle | watching | checking | no_file
-  const [watchedDir,setWatchedDir]=useState(null);       // DirectoryHandle
-  const [lastLoaded,setLastLoaded]=useState(null);        // {name, time}
-  const [lastFileTime,setLastFileTime]=useState(0);
-  const fileRef=useRef();
-  const intervalRef=useRef(null);
-  const supportsFS = typeof window.showDirectoryPicker === 'function';
-
-  // On mount: restore saved handle
-  useEffect(()=>{
-    (async()=>{
-      const handle = await loadDirectoryHandle();
-      if(!handle) return;
-      try {
-        // Check permission
-        const perm = await handle.queryPermission({mode:'read'});
-        if(perm==='granted') { attachWatch(handle); }
-        else { setWatchStatus('idle'); }
-      } catch { /* handle stale */ }
-    })();
-    return ()=>{ if(intervalRef.current) clearInterval(intervalRef.current); };
-  },[]);
-
-  const attachWatch = (handle) => {
-    setWatchedDir(handle);
-    setWatchStatus('watching');
-    if(intervalRef.current) clearInterval(intervalRef.current);
-    // Check immediately, then every 60 seconds
-    checkForNew(handle);
-    intervalRef.current = setInterval(()=>checkForNew(handle), 60_000);
-  };
-
-  const checkForNew = async(handle) => {
-    setWatchStatus('checking');
-    try {
-      const file = await getNewestFile(handle);
-      if(!file){ setWatchStatus('no_file'); return; }
-      setWatchStatus('watching');
-      // Only reload if file is newer than what we last loaded
-      setLastFileTime(prev => {
-        if(file.lastModified > prev) {
-          processFile(file, file.lastModified);
-          return file.lastModified;
-        }
-        return prev;
-      });
-    } catch(e) {
-      setWatchStatus('idle');
-    }
-  };
-
-  const connectFolder = async() => {
-    if(!supportsFS){ setError('Il tuo browser non supporta File System Access API. Usa Chrome o Safari 15.2+ su Mac.'); return; }
-    try {
-      const handle = await window.showDirectoryPicker({mode:'read', startIn:'documents', id:'pdfcsv'});
-      await saveDirectoryHandle(handle);
-      attachWatch(handle);
-    } catch(e) {
-      if(e.name!=='AbortError') setError('Errore accesso cartella: '+e.message);
-    }
-  };
-
-  const disconnectFolder = () => {
-    if(intervalRef.current) clearInterval(intervalRef.current);
-    setWatchedDir(null);
-    setWatchStatus('idle');
-    setLastLoaded(null);
-    setLastFileTime(0);
-    saveDirectoryHandle(null).catch(()=>{});
-  };
-
-  const processFile=async(file, fileTime)=>{
-    if(!file) return;
-    setError(''); setLoading(true); setProgress(5);
-    try {
-      if(file.name.endsWith('.pdf')||file.type==='application/pdf') {
-        setProgress(10);
-        const buf=await file.arrayBuffer();
-        setProgress(20);
-        const txs=await parseRevolutPDF(buf,setProgress);
-        setProgress(100);
-        if(txs.length===0){setError('Nessuna transazione trovata nel PDF. Prova con il CSV o un PDF diverso.');setLoading(false);return;}
-        setLastLoaded({name:file.name, time: file.lastModified||Date.now()});
-        setTimeout(()=>onLoad(txs),300);
-      } else {
-        const text=await file.text();
-        setProgress(60);
-        const txs=parseRevolutCSV(text);
-        setProgress(100);
-        if(txs.length===0){setError('Nessuna transazione trovata. Verifica che sia un CSV Revolut valido.');setLoading(false);return;}
-        setLastLoaded({name:file.name, time: file.lastModified||Date.now()});
-        setTimeout(()=>onLoad(txs),300);
-      }
-    } catch(e) {
-      setError(`Errore nel leggere il file: ${e.message}`);
-      setLoading(false);
-    }
-  };
-
-  const fmtTime = (ts) => {
-    if(!ts) return '';
-    const d = new Date(ts);
-    return d.toLocaleDateString('it-IT',{day:'2-digit',month:'short'})+' '+d.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'});
-  };
-
-  const statusDot = watchStatus==='watching'?C.green : watchStatus==='checking'?C.cyan : watchStatus==='no_file'?C.orange : C.tertiary;
-  const statusLabel = watchStatus==='watching'?'Attiva' : watchStatus==='checking'?'Verifica...' : watchStatus==='no_file'?'Nessun file trovato' : 'Non connessa';
-
-  return (
-    <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:24,gap:24,background:'#000000',minHeight:'100%'}}>
-      <div style={{width:92,height:92,borderRadius:28,background:'radial-gradient(circle at 50% 30%, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.03) 18%, rgba(10,0,16,0.92) 46%, rgba(0,0,0,1) 72%)',border:'1.5px solid rgba(191,0,255,0.85)',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 52px rgba(191,0,255,0.50), inset 0 0 28px rgba(191,0,255,0.22)'}}>
-        <svg width="46" height="46" viewBox="0 0 48 48" fill="none">
-          <defs>
-            <filter id="hbGlow2" x="-80%" y="-80%" width="260%" height="260%">
-              <feGaussianBlur stdDeviation="2.6" result="b"/>
-              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-            </filter>
-            <linearGradient id="hbPurple2" x1="10" y1="6" x2="38" y2="42" gradientUnits="userSpaceOnUse">
-              <stop stopColor="#F8E6FF"/>
-              <stop offset="0.42" stopColor="#D98BFF"/>
-              <stop offset="1" stopColor="#BF00FF"/>
-            </linearGradient>
-          </defs>
-          <circle cx="24" cy="24" r="16" stroke="url(#hbPurple2)" strokeWidth="1.2" opacity="0.24" filter="url(#hbGlow2)"/>
-          <path d="M24 8L27.8 20.2L40 24L27.8 27.8L24 40L20.2 27.8L8 24L20.2 20.2L24 8Z" fill="url(#hbPurple2)" filter="url(#hbGlow2)"/>
-          <circle cx="24" cy="24" r="3" fill="#FFFFFF" opacity="0.97"/>
-        </svg>
-      </div>
-      <div style={{textAlign:'center'}}>
-        <div style={{color:C.primary,fontSize:24,fontFamily:FONT.display,fontWeight:700,letterSpacing:'-0.5px',marginBottom:8}}>HomeBanking</div>
-        <div style={{color:C.secondary,fontSize:14,fontFamily:FONT.text,lineHeight:1.5}}>Carica il tuo estratto Revolut<br/><span style={{color:C.cyan,fontWeight:600}}>PDF</span> o <span style={{color:C.cyan,fontWeight:600}}>CSV</span> — analisi AI immediata</div>
-      </div>
-
-      {loading?(
-        <div style={{width:'100%',maxWidth:340,display:'flex',flexDirection:'column',alignItems:'center',gap:16}}>
-          <div className="rv-orb-animated" style={{width:56,height:56,borderRadius:'50%',background:`conic-gradient(from 0deg, ${C.purple}, ${C.cyan}, ${C.green}, ${C.purple})`,padding:2}}>
-            <div style={{width:'100%',height:'100%',borderRadius:'50%',background:C.bg}}/>
-          </div>
-          <div style={{color:C.secondary,fontSize:13,fontFamily:FONT.text}}>Analisi in corso...</div>
-          <div style={{width:'100%',height:4,borderRadius:2,background:C.glass3,overflow:'hidden'}}>
-            <div style={{height:'100%',borderRadius:2,background:C.cyan,width:`${progress}%`,transition:'width 0.3s ease'}}/>
-          </div>
-          <div style={{color:C.tertiary,fontSize:11,fontFamily:FONT.mono}}>{progress}%</div>
-        </div>
-      ):(
-        <>
-          {/* ── iCloud PDFCSV auto-watch card ── */}
-          {supportsFS && (
-            <Glass C={C} style={{width:'100%',maxWidth:340}} padding="p-4">
-              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:12}}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                  <path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z" stroke={C.cyan} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-                <span style={{color:C.primary,fontSize:13,fontFamily:FONT.text,fontWeight:700,flex:1}}>Auto-sync iCloud · PDFCSV</span>
-                {watchedDir && (
-                  <div style={{display:'flex',alignItems:'center',gap:4}}>
-                    <div style={{width:7,height:7,borderRadius:4,background:statusDot,boxShadow:`0 0 6px ${statusDot}`}}/>
-                    <span style={{color:statusDot,fontSize:10,fontFamily:FONT.mono,fontWeight:600}}>{statusLabel}</span>
-                  </div>
-                )}
-              </div>
-
-              {watchedDir ? (
-                <>
-                  <div style={{color:C.secondary,fontSize:12,fontFamily:FONT.text,lineHeight:1.5,marginBottom:10}}>
-                    L'app controlla ogni 60 secondi la cartella <span style={{color:C.cyan,fontWeight:600}}>PDFCSV</span> e carica automaticamente il file più recente.
-                  </div>
-                  {lastLoaded && (
-                    <div style={{display:'flex',alignItems:'center',gap:6,padding:'6px 10px',background:`${C.green}12`,border:`0.5px solid ${C.green}30`,borderRadius:RADIUS.inset,marginBottom:10}}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12" stroke={C.green} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                      <span style={{color:C.green,fontSize:11,fontFamily:FONT.mono,flex:1}}>{lastLoaded.name}</span>
-                      <span style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono}}>{fmtTime(lastLoaded.time)}</span>
-                    </div>
-                  )}
-                  <div style={{display:'flex',gap:8}}>
-                    <button onClick={()=>checkForNew(watchedDir)} className="rv-btn" style={{flex:1,padding:'8px 0',fontSize:12,fontFamily:FONT.text,fontWeight:600,background:C.glass2,border:`0.5px solid ${C.sep}`,borderRadius:RADIUS.pill,cursor:'pointer',color:C.secondary}}>
-                      Controlla ora
-                    </button>
-                    <button onClick={disconnectFolder} className="rv-btn" style={{flex:1,padding:'8px 0',fontSize:12,fontFamily:FONT.text,fontWeight:600,background:`${C.red}14`,border:`0.5px solid ${C.red}40`,borderRadius:RADIUS.pill,cursor:'pointer',color:C.red}}>
-                      Disconnetti
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div style={{color:C.secondary,fontSize:12,fontFamily:FONT.text,lineHeight:1.55,marginBottom:12}}>
-                    Collega la cartella <span style={{color:C.cyan,fontWeight:600}}>File → iCloud Drive → PDFCSV</span>. Ogni volta che salvi un nuovo CSV o PDF lì, l'app lo carica da sola.
-                  </div>
-                  <button onClick={connectFolder} className="rv-btn" style={{width:'100%',padding:'10px 0',fontSize:13,fontFamily:FONT.text,fontWeight:700,background:`linear-gradient(135deg, ${C.purple}30, ${C.cyan}20)`,border:`0.5px solid ${C.cyan}60`,borderRadius:RADIUS.pill,cursor:'pointer',color:C.cyan}}>
-                    Collega cartella PDFCSV
-                  </button>
-                </>
-              )}
-            </Glass>
-          )}
-
-          {/* ── Manual upload fallback ── */}
-          <div onClick={()=>fileRef.current?.click()} onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={e=>{e.preventDefault();setDragging(false);processFile(e.dataTransfer.files[0]);}} style={{width:'100%',maxWidth:340,padding:'32px 24px',borderRadius:RADIUS.card,border:`1.5px dashed ${dragging?C.cyan:C.sep2}`,background:dragging?`${C.cyan}08`:C.glass,display:'flex',flexDirection:'column',alignItems:'center',gap:12,cursor:'pointer',transition:'all 0.2s ease'}}>
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke={C.tertiary} strokeWidth="1.8"/><polyline points="14 2 14 8 20 8" stroke={C.tertiary} strokeWidth="1.8"/><line x1="16" y1="13" x2="8" y2="13" stroke={C.tertiary} strokeWidth="1.8" strokeLinecap="round"/></svg>
-            <div style={{color:C.primary,fontSize:15,fontFamily:FONT.text,fontWeight:600}}>Trascina il file qui</div>
-            <div style={{color:C.tertiary,fontSize:12,fontFamily:FONT.text}}>oppure tocca per selezionare</div>
-            <div style={{display:'flex',gap:8}}>
-              <span style={{padding:'4px 12px',background:`${C.cyan}20`,border:`0.5px solid ${C.cyan}50`,borderRadius:RADIUS.pill,color:C.cyan,fontSize:11,fontFamily:FONT.mono,fontWeight:700}}>PDF</span>
-              <span style={{padding:'4px 12px',background:`${C.green}20`,border:`0.5px solid ${C.green}50`,borderRadius:RADIUS.pill,color:C.green,fontSize:11,fontFamily:FONT.mono,fontWeight:700}}>CSV</span>
-            </div>
-          </div>
-          <input ref={fileRef} type="file" accept=".csv,.pdf" style={{display:'none'}} onChange={e=>processFile(e.target.files[0])}/>
-          {error&&<div style={{color:C.red,fontSize:13,fontFamily:FONT.text,textAlign:'center',maxWidth:300}}>{error}</div>}
-          <Glass C={C} style={{width:'100%',maxWidth:340}} padding="p-4">
-            <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:10}}>Come esportare da Revolut</div>
-            {['Apri Revolut → Profilo','Vai su "Estratti conto"','Seleziona il periodo','Scegli PDF (italiano) o CSV ed esporta','Salva nella cartella PDFCSV su iCloud Drive'].map((s,i)=>(
-              <div key={i} style={{display:'flex',gap:10,alignItems:'flex-start',marginBottom:i<4?8:0}}>
-                <div style={{width:18,height:18,borderRadius:9,flexShrink:0,background:i===4?`${C.cyan}30`:`${C.cyan}20`,border:`0.5px solid ${i===4?C.cyan:C.cyan}50`,display:'flex',alignItems:'center',justifyContent:'center',color:C.cyan,fontSize:10,fontFamily:FONT.mono,fontWeight:700}}>{i+1}</div>
-                <span style={{color:i===4?C.cyan:C.secondary,fontSize:12,fontFamily:FONT.text,fontWeight:i===4?600:400}}>{s}</span>
-              </div>
-            ))}
-          </Glass>
-        </>
-      )}
-    </div>
-  );
-}
+/* ===== UploadScreen rimosso — inserimento manuale via scheda Storico ===== */
 
 /* ============= APP ICONS (xautrader style) ============= */
 const RvAppIcon = ({ children, gradient, active, size = 32 }) => (
@@ -2247,7 +1707,6 @@ function SettingsModal({C,open,onClose,schemeOverride,setSchemeOverride,accounts
   const [editingId,setEditingId]=useState(null);
   const [newName,setNewName]=useState('');
   const [newColor,setNewColor]=useState(BANK_COLORS[0]);
-  const fileRefs=useRef({});
 
   if(!open) return null;
 
@@ -2264,31 +1723,6 @@ function SettingsModal({C,open,onClose,schemeOverride,setSchemeOverride,accounts
     setAccounts(prev=>prev.filter(a=>a.id!==id));
     if(activeAccountId===id) setActiveAccountId(accounts.find(a=>a.id!==id)?.id||null);
     haptic.medium();
-  };
-
-  const triggerFile=(id)=>{ fileRefs.current[id]?.click(); };
-
-  const handleFile=(id,file)=>{
-    if(!file) return;
-    const reader=new FileReader();
-    const isPDF=file.name.toLowerCase().endsWith('.pdf');
-    if(isPDF){
-      reader.readAsArrayBuffer(file);
-      reader.onload=async(e)=>{
-        try{
-          const txs=await parseRevolutPDF(e.target.result,()=>{});
-          if(txs.length===0){alert('Nessuna transazione trovata nel PDF.');return;}
-          onLoadForAccount(id,txs); haptic.success();
-        }catch(err){alert('Errore PDF: '+err.message); haptic.error();}
-      };
-    } else {
-      reader.readAsText(file,'UTF-8');
-      reader.onload=(e)=>{
-        const txs=parseRevolutCSV(e.target.result);
-        if(txs.length===0){alert('Nessuna transazione trovata nel CSV.');return;}
-        onLoadForAccount(id,txs); haptic.success();
-      };
-    }
   };
 
   return (
@@ -2347,13 +1781,6 @@ function SettingsModal({C,open,onClose,schemeOverride,setSchemeOverride,accounts
                       </div>
                     </div>
                     {activeAccountId===acc.id&&<div style={{width:7,height:7,borderRadius:4,background:acc.color,boxShadow:`0 0 6px ${acc.color}`}}/>}
-                    <button onClick={e=>{e.stopPropagation();triggerFile(acc.id);}} className="rv-btn" style={{
-                      padding:'4px 10px',fontSize:10,fontFamily:FONT.text,fontWeight:600,
-                      background:`${C.cyan}20`,border:`0.5px solid ${C.cyan}50`,borderRadius:RADIUS.pill,
-                      cursor:'pointer',color:C.cyan,
-                    }}>
-                      {acc.rawTxs?'Aggiorna':'Carica'}
-                    </button>
                     {accounts.length>1&&(
                       <button onClick={e=>{e.stopPropagation();removeAccount(acc.id);}} className="rv-btn" style={{
                         width:24,height:24,borderRadius:12,background:`${C.red}20`,border:`0.5px solid ${C.red}40`,
@@ -2362,7 +1789,6 @@ function SettingsModal({C,open,onClose,schemeOverride,setSchemeOverride,accounts
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M18 6 6 18M6 6l12 12" stroke={C.red} strokeWidth="2.5" strokeLinecap="round"/></svg>
                       </button>
                     )}
-                    <input ref={el=>fileRefs.current[acc.id]=el} type="file" accept=".csv,.pdf" style={{display:'none'}} onChange={e=>handleFile(acc.id,e.target.files[0])}/>
                   </div>
                 </div>
               ))}
@@ -2533,6 +1959,35 @@ export default function App() {
     }:a));
   },[setAccounts]);
 
+  // Inserimento manuale: aggiunge una transazione al conto scelto.
+  // Azzera gli eventuali totali "summary" cosi' i totali vengono ricalcolati dalla lista.
+  const addTransaction=useCallback((accId,tx)=>{
+    if(!accId||!tx) return;
+    setAccounts(prev=>prev.map(a=>a.id===accId?{
+      ...a,
+      rawTxs:[...(a.rawTxs||[]),tx],
+      summaryIncome:null, summaryExpense:null,
+    }:a));
+  },[setAccounts]);
+
+  const deleteTransaction=useCallback((txId)=>{
+    if(!txId) return;
+    setAccounts(prev=>prev.map(a=>a.rawTxs?{
+      ...a,
+      rawTxs:a.rawTxs.filter(t=>t.id!==txId),
+    }:a));
+  },[setAccounts]);
+
+  // Modifica in-place: rimuove la vecchia transazione (ovunque sia) e reinserisce
+  // quella aggiornata (stesso id) nel conto scelto. Gestisce anche lo spostamento di conto.
+  const updateTransaction=useCallback((txId,accId,tx)=>{
+    if(!txId||!accId||!tx) return;
+    setAccounts(prev=>{
+      const cleaned=prev.map(a=>a.rawTxs?{...a,rawTxs:a.rawTxs.filter(t=>t.id!==txId)}:a);
+      return cleaned.map(a=>a.id===accId?{...a,rawTxs:[...(a.rawTxs||[]),tx],summaryIncome:null,summaryExpense:null}:a);
+    });
+  },[setAccounts]);
+
   const activeTxs=useMemo(()=>{
     if(activeAccountId===ALL_ID){
       const all=accounts.flatMap(a=>a.rawTxs||[]);
@@ -2556,8 +2011,10 @@ export default function App() {
 
   const data=useMemo(()=>activeTxs&&activeTxs.length?analyzeTransactions(activeTxs):null,[activeTxs]);
 
-  const [tabIdx,setTabIdx]=useState(0);
-  const tabIdxRef=useRef(0);
+  // Se non ci sono ancora transazioni, parti dalla scheda "Storico" (dove si aggiunge).
+  const initialTab=(activeTxs&&activeTxs.length)?0:1;
+  const [tabIdx,setTabIdx]=useState(initialTab);
+  const tabIdxRef=useRef(initialTab);
   useEffect(()=>{tabIdxRef.current=tabIdx;},[tabIdx]);
 
   const snapTo=(idx)=>{
@@ -2570,7 +2027,7 @@ export default function App() {
   };
 
   const activeAcc=accounts.find(a=>a.id===activeAccountId);
-  const showUpload=!activeTxs||!data;
+  const safeTxs=activeTxs||[];   // le pagine gestiscono la lista vuota autonomamente
   const currentTab=TAB_ORDER[tabIdx];
 
   return (
@@ -2616,24 +2073,20 @@ export default function App() {
         </div>
       </header>
 
-      {/* PAGER — identico a XAUTrader: AI separato, scroll wrapper con safe-area */}
-      {showUpload ? (
-        <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none'}}>
-          <UploadScreen C={C} accountName={activeAcc?.name||'Conto'} onLoad={(txs)=>onLoadForAccount(activeAccountId,txs)}/>
-        </div>
-      ) : currentTab==='ai' ? (
+      {/* PAGER — AI separato, scroll wrapper con safe-area */}
+      {currentTab==='ai' ? (
         <div style={{flex:1,minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column'}}>
           <div style={{flex:1,minHeight:0,display:'flex',flexDirection:'column',maxWidth:896,width:'100%',margin:'0 auto',padding:'0 0',paddingBottom:'env(safe-area-inset-bottom, 0px)'}}>
-            <AIPage C={C} data={data} txs={activeTxs} setInputFocused={setInputFocused} input={aiInput} setInput={setAiInput} send={aiSendRef} inputRef={aiInputRef}/>
+            <AIPage C={C} data={data} txs={safeTxs} setInputFocused={setInputFocused} input={aiInput} setInput={setAiInput} send={aiSendRef} inputRef={aiInputRef}/>
           </div>
         </div>
       ) : (
         <div style={{flex:1,overflowY:'auto',overflowX:'hidden',WebkitOverflowScrolling:'touch',overscrollBehavior:'none'}}>
         <div style={{paddingBottom:'calc(96px + env(safe-area-inset-bottom, 0px))', paddingTop:12}}>
-            {currentTab==='overview'  &&<OverviewPage   C={C} data={data} txs={activeTxs}/>}
-            {currentTab==='spese'     &&<SpesePage      C={C} data={data} txs={activeTxs}/>}
-            {currentTab==='movimenti' &&<MovimentiPage  C={C} txs={activeTxs}/>}
-            {currentTab==='analytics' &&<AnalyticsPage  C={C} data={data} txs={activeTxs}/>}
+            {currentTab==='overview'  &&<OverviewPage   C={C} data={data} txs={safeTxs}/>}
+            {currentTab==='spese'     &&<SpesePage      C={C} data={data} txs={safeTxs}/>}
+            {currentTab==='movimenti' &&<MovimentiPage  C={C} txs={safeTxs} accounts={accounts} activeAccountId={activeAccountId} onAddTransaction={addTransaction} onUpdateTransaction={updateTransaction} onDeleteTransaction={deleteTransaction}/>}
+            {currentTab==='analytics' &&<AnalyticsPage  C={C} data={data} txs={safeTxs}/>}
           </div>
         </div>
       )}
@@ -2650,7 +2103,7 @@ export default function App() {
       </div>
 
       {/* AI INPUT BAR — fixed, appena sopra la tab bar; quando tastiera aperta iOS la solleva automaticamente */}
-      {currentTab==='ai'&&!showUpload&&(
+      {currentTab==='ai'&&(
         <div style={{
           position:'fixed',
           left:0,right:0,
