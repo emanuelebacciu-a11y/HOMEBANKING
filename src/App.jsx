@@ -704,7 +704,7 @@ function AddTransactionModal({C,open,onClose,accounts=[],activeAccountId,editTx=
 
   const TYPES=[{id:'in',label:'Entrata',col:C.green},{id:'out',label:'Uscita',col:C.red},{id:'transfer',label:'Conversione',col:C.cyan}];
 
-  return (
+  return createPortal(
     <>
       <div onClick={onClose} style={{position:'fixed',inset:0,zIndex:210,background:'rgba(0,0,0,0.55)',backdropFilter:'blur(4px)',WebkitBackdropFilter:'blur(4px)'}}/>
       {/* Foglio ancorato in basso, altezza max fissa e scroll interno: semplice e
@@ -824,7 +824,8 @@ function AddTransactionModal({C,open,onClose,accounts=[],activeAccountId,editTx=
           )}
         </div>
       </div>
-    </>
+    </>,
+    document.body
   );
 }
 
