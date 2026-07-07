@@ -724,14 +724,22 @@ function AddTransactionModal({C,open,onClose,accounts=[],activeAccountId,editTx=
 
   const TYPES=[{id:'in',label:'Entrata',col:C.green},{id:'out',label:'Uscita',col:C.red},{id:'transfer',label:'Conversione',col:C.cyan}];
 
+  // Quanto la tastiera occupa dal basso: solleviamo il foglio esattamente sopra
+  // la tastiera. Il foglio è ancorato in basso (bottom) e scrolla internamente,
+  // così il pulsante "Salva" è SEMPRE raggiungibile.
+  const innerH = (typeof window!=='undefined') ? window.innerHeight : vp.h;
+  const kbInset = Math.max(0, innerH - vp.h - vp.top);
+  const sheetMax = Math.max(240, vp.h - 20);
+
   return (
-    <div style={{position:'fixed',left:0,right:0,top:vp.top,height:vp.h,zIndex:210,display:'flex',flexDirection:'column',justifyContent:'flex-end'}}>
-      <div onClick={onClose} style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.55)',backdropFilter:'blur(4px)'}}/>
+    <>
+      <div onClick={onClose} style={{position:'fixed',inset:0,zIndex:210,background:'rgba(0,0,0,0.55)',backdropFilter:'blur(4px)',WebkitBackdropFilter:'blur(4px)'}}/>
       <div className="rv-card" style={{
-        position:'relative',zIndex:1,
+        position:'fixed',left:0,right:0,bottom:kbInset,zIndex:211,
         background:C.glass,backdropFilter:'blur(40px)',WebkitBackdropFilter:'blur(40px)',
         borderRadius:'28px 28px 0 0',border:`0.5px solid ${C.sep2}`,
-        maxHeight:'100%',overflowY:'auto',paddingBottom:'env(safe-area-inset-bottom,0px)',
+        maxHeight:sheetMax,overflowY:'auto',
+        paddingBottom: kbInset>0 ? 10 : 'env(safe-area-inset-bottom,0px)',
       }}>
         <div style={{display:'flex',justifyContent:'center',padding:'12px 0 4px'}}>
           <div style={{width:36,height:4,borderRadius:2,background:C.glass3}}/>
@@ -839,7 +847,7 @@ function AddTransactionModal({C,open,onClose,accounts=[],activeAccountId,editTx=
           )}
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
