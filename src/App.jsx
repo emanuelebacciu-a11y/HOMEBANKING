@@ -667,6 +667,26 @@ function AddTransactionModal({C,open,onClose,accounts=[],activeAccountId,editTx=
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[open,editTx]);
 
+  // Il modale è un overlay a schermo intero: su iOS la tastiera lo lascia
+  // "incastrato" alla dimensione ridotta, lasciando il nero sotto alla chiusura.
+  // Seguiamo il viewport VISIBILE (visualViewport, che si restringe con la
+  // tastiera e si ripristina alla chiusura), come fa già la barra della AI.
+  const [vp,setVp]=useState(()=>({
+    h: (typeof window!=='undefined' && window.visualViewport?.height) || (typeof window!=='undefined'? window.innerHeight : 0),
+    top: (typeof window!=='undefined' && window.visualViewport?.offsetTop) || 0,
+  }));
+  useEffect(()=>{
+    if(!open) return;
+    const vv = typeof window!=='undefined' ? window.visualViewport : null;
+    const upd = () => setVp({ h: (vv?.height)||window.innerHeight, top: (vv?.offsetTop)||0 });
+    upd();
+    const t1=setTimeout(upd,60), t2=setTimeout(upd,300);
+    vv?.addEventListener('resize',upd);
+    vv?.addEventListener('scroll',upd);
+    window.addEventListener('resize',upd);
+    return ()=>{ clearTimeout(t1); clearTimeout(t2); vv?.removeEventListener('resize',upd); vv?.removeEventListener('scroll',upd); window.removeEventListener('resize',upd); };
+  },[open]);
+
   if(!open) return null;
 
   const parseAmt=(s)=>{ const v=parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')); return isNaN(v)?NaN:v; };
@@ -705,13 +725,13 @@ function AddTransactionModal({C,open,onClose,accounts=[],activeAccountId,editTx=
   const TYPES=[{id:'in',label:'Entrata',col:C.green},{id:'out',label:'Uscita',col:C.red},{id:'transfer',label:'Conversione',col:C.cyan}];
 
   return (
-    <div style={{position:'fixed',inset:0,zIndex:210,display:'flex',flexDirection:'column',justifyContent:'flex-end'}}>
+    <div style={{position:'fixed',left:0,right:0,top:vp.top,height:vp.h,zIndex:210,display:'flex',flexDirection:'column',justifyContent:'flex-end'}}>
       <div onClick={onClose} style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.55)',backdropFilter:'blur(4px)'}}/>
       <div className="rv-card" style={{
         position:'relative',zIndex:1,
         background:C.glass,backdropFilter:'blur(40px)',WebkitBackdropFilter:'blur(40px)',
         borderRadius:'28px 28px 0 0',border:`0.5px solid ${C.sep2}`,
-        maxHeight:'90vh',overflowY:'auto',paddingBottom:'env(safe-area-inset-bottom,0px)',
+        maxHeight:'100%',overflowY:'auto',paddingBottom:'env(safe-area-inset-bottom,0px)',
       }}>
         <div style={{display:'flex',justifyContent:'center',padding:'12px 0 4px'}}>
           <div style={{width:36,height:4,borderRadius:2,background:C.glass3}}/>
