@@ -667,33 +667,6 @@ function AddTransactionModal({C,open,onClose,accounts=[],activeAccountId,editTx=
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[open,editTx]);
 
-  // Gestione tastiera iOS: quanto occupa dal basso (kb) e l'altezza visibile (avail),
-  // con CLAMP di sicurezza: se il valore è anomalo consideriamo la tastiera chiusa,
-  // così il foglio resta ancorato in basso e non finisce MAI fuori schermo.
-  const measureKb = () => {
-    if (typeof window === 'undefined') return { kb: 0, avail: 800 };
-    const vv = window.visualViewport;
-    const layoutH = document.documentElement.clientHeight || window.innerHeight || 800;
-    if (!vv) return { kb: 0, avail: layoutH };
-    let kb = Math.round(layoutH - vv.height - vv.offsetTop);
-    kb = (kb >= 120 && kb <= layoutH * 0.75) ? kb : 0;   // solo una tastiera reale
-    const avail = Math.max(300, Math.round(vv.height));
-    return { kb, avail };
-  };
-  const [kbState,setKbState]=useState(measureKb);
-  useEffect(()=>{
-    if(!open) return;
-    const upd = () => setKbState(measureKb());
-    upd();
-    const t1=setTimeout(upd,60), t2=setTimeout(upd,300);
-    const vv = window.visualViewport;
-    vv?.addEventListener('resize',upd);
-    vv?.addEventListener('scroll',upd);
-    window.addEventListener('resize',upd);
-    return ()=>{ clearTimeout(t1); clearTimeout(t2); vv?.removeEventListener('resize',upd); vv?.removeEventListener('scroll',upd); window.removeEventListener('resize',upd); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[open]);
-
   if(!open) return null;
 
   const parseAmt=(s)=>{ const v=parseFloat(String(s).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'')); return isNaN(v)?NaN:v; };
@@ -731,20 +704,19 @@ function AddTransactionModal({C,open,onClose,accounts=[],activeAccountId,editTx=
 
   const TYPES=[{id:'in',label:'Entrata',col:C.green},{id:'out',label:'Uscita',col:C.red},{id:'transfer',label:'Conversione',col:C.cyan}];
 
-  // Solleva il foglio sopra la tastiera (kbInset) e limita l'altezza al visibile.
-  // Grazie al clamp in measureKb, kbInset è 0 se il valore è anomalo → foglio in basso.
-  const kbInset = kbState.kb;
-  const sheetMax = Math.max(240, kbState.avail - 24);
-
   return (
     <>
       <div onClick={onClose} style={{position:'fixed',inset:0,zIndex:210,background:'rgba(0,0,0,0.55)',backdropFilter:'blur(4px)',WebkitBackdropFilter:'blur(4px)'}}/>
+      {/* Foglio ancorato in basso, altezza max fissa e scroll interno: semplice e
+          robusto (niente calcoli sul viewport che possono incastrarsi). La tastiera
+          copre temporaneamente il fondo, ma il campo attivo resta visibile e appena
+          la chiudi tutto torna raggiungibile. */}
       <div className="rv-card" style={{
-        position:'fixed',left:0,right:0,bottom:kbInset,zIndex:211,
+        position:'fixed',left:0,right:0,bottom:0,zIndex:211,
         background:C.glass,backdropFilter:'blur(40px)',WebkitBackdropFilter:'blur(40px)',
         borderRadius:'28px 28px 0 0',border:`0.5px solid ${C.sep2}`,
-        maxHeight:sheetMax,overflowY:'auto',
-        paddingBottom: kbInset>0 ? 10 : 'env(safe-area-inset-bottom,0px)',
+        maxHeight:'88vh',overflowY:'auto',WebkitOverflowScrolling:'touch',
+        paddingBottom:'env(safe-area-inset-bottom,0px)',
       }}>
         <div style={{display:'flex',justifyContent:'center',padding:'12px 0 4px'}}>
           <div style={{width:36,height:4,borderRadius:2,background:C.glass3}}/>
