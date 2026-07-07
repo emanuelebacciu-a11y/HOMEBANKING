@@ -667,24 +667,31 @@ function AddTransactionModal({C,open,onClose,accounts=[],activeAccountId,editTx=
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[open,editTx]);
 
-  // Il modale è un overlay a schermo intero: su iOS la tastiera lo lascia
-  // "incastrato" alla dimensione ridotta, lasciando il nero sotto alla chiusura.
-  // Seguiamo il viewport VISIBILE (visualViewport, che si restringe con la
-  // tastiera e si ripristina alla chiusura), come fa già la barra della AI.
-  const [vp,setVp]=useState(()=>({
-    h: (typeof window!=='undefined' && window.visualViewport?.height) || (typeof window!=='undefined'? window.innerHeight : 0),
-    top: (typeof window!=='undefined' && window.visualViewport?.offsetTop) || 0,
-  }));
+  // Gestione tastiera iOS: quanto occupa dal basso (kb) e l'altezza visibile (avail),
+  // con CLAMP di sicurezza: se il valore è anomalo consideriamo la tastiera chiusa,
+  // così il foglio resta ancorato in basso e non finisce MAI fuori schermo.
+  const measureKb = () => {
+    if (typeof window === 'undefined') return { kb: 0, avail: 800 };
+    const vv = window.visualViewport;
+    const layoutH = document.documentElement.clientHeight || window.innerHeight || 800;
+    if (!vv) return { kb: 0, avail: layoutH };
+    let kb = Math.round(layoutH - vv.height - vv.offsetTop);
+    kb = (kb >= 120 && kb <= layoutH * 0.75) ? kb : 0;   // solo una tastiera reale
+    const avail = Math.max(300, Math.round(vv.height));
+    return { kb, avail };
+  };
+  const [kbState,setKbState]=useState(measureKb);
   useEffect(()=>{
     if(!open) return;
-    const vv = typeof window!=='undefined' ? window.visualViewport : null;
-    const upd = () => setVp({ h: (vv?.height)||window.innerHeight, top: (vv?.offsetTop)||0 });
+    const upd = () => setKbState(measureKb());
     upd();
     const t1=setTimeout(upd,60), t2=setTimeout(upd,300);
+    const vv = window.visualViewport;
     vv?.addEventListener('resize',upd);
     vv?.addEventListener('scroll',upd);
     window.addEventListener('resize',upd);
     return ()=>{ clearTimeout(t1); clearTimeout(t2); vv?.removeEventListener('resize',upd); vv?.removeEventListener('scroll',upd); window.removeEventListener('resize',upd); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[open]);
 
   if(!open) return null;
@@ -724,12 +731,10 @@ function AddTransactionModal({C,open,onClose,accounts=[],activeAccountId,editTx=
 
   const TYPES=[{id:'in',label:'Entrata',col:C.green},{id:'out',label:'Uscita',col:C.red},{id:'transfer',label:'Conversione',col:C.cyan}];
 
-  // Quanto la tastiera occupa dal basso: solleviamo il foglio esattamente sopra
-  // la tastiera. Il foglio è ancorato in basso (bottom) e scrolla internamente,
-  // così il pulsante "Salva" è SEMPRE raggiungibile.
-  const innerH = (typeof window!=='undefined') ? window.innerHeight : vp.h;
-  const kbInset = Math.max(0, innerH - vp.h - vp.top);
-  const sheetMax = Math.max(240, vp.h - 20);
+  // Solleva il foglio sopra la tastiera (kbInset) e limita l'altezza al visibile.
+  // Grazie al clamp in measureKb, kbInset è 0 se il valore è anomalo → foglio in basso.
+  const kbInset = kbState.kb;
+  const sheetMax = Math.max(240, kbState.avail - 24);
 
   return (
     <>
@@ -763,7 +768,7 @@ function AddTransactionModal({C,open,onClose,accounts=[],activeAccountId,editTx=
           <AtField C={C} label="Importo">
             <div style={{display:'flex',alignItems:'center',gap:8,padding:'12px 16px',background:C.glass2,border:`0.5px solid ${typeColor}45`,borderRadius:RADIUS.inset}}>
               <span style={{color:typeColor,fontSize:26,fontFamily:FONT.display,fontWeight:700}}>€</span>
-              <input inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0,00" autoFocus style={{flex:1,minWidth:0,background:'transparent',border:'none',outline:'none',color:C.primary,fontSize:26,fontFamily:FONT.display,fontWeight:700,letterSpacing:'-0.5px',fontVariantNumeric:'tabular-nums'}}/>
+              <input inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0,00" style={{flex:1,minWidth:0,background:'transparent',border:'none',outline:'none',color:C.primary,fontSize:26,fontFamily:FONT.display,fontWeight:700,letterSpacing:'-0.5px',fontVariantNumeric:'tabular-nums'}}/>
             </div>
           </AtField>
 
