@@ -1927,21 +1927,40 @@ function AccountPill({C,accounts,activeAccountId,setActiveAccountId}) {
 export default function App() {
   useEffect(()=>{injectCSS();injectPressManager();injectPWAMeta();},[]);
 
-  // ── Altezza reale — identico a XAUTrader ──────────────────────────────────
+  // ── Altezza reale ────────────────────────────────────────────────────────
   const getH = () => {
     const isStandalone =
       ('standalone' in navigator && navigator.standalone === true) ||
       window.matchMedia('(display-mode: standalone)').matches;
-    return isStandalone ? screen.height : window.innerHeight;
+    if (isStandalone) return screen.height;
+    // In-browser: usa il viewport VISIBILE (esclude la tastiera). Così alla
+    // chiusura della tastiera l'altezza si ripristina e non resta l'area nera.
+    return (window.visualViewport && window.visualViewport.height) || window.innerHeight;
   };
   const [appHeight, setAppHeight] = useState(() => getH());
   useEffect(() => {
     const update = () => setAppHeight(getH());
     update();
     const t = setTimeout(update, 300);
+    // Alla chiusura della tastiera iOS può lasciare lo scroll spostato e mostrare
+    // il fondo nero della pagina: riporto lo scroll a 0 e rimisuro (più volte,
+    // perché iOS ripristina il viewport con un piccolo ritardo).
+    const restore = () => { try { window.scrollTo(0, 0); } catch(_){} update(); };
+    const onFocusOut = () => { setTimeout(restore, 50); setTimeout(restore, 250); setTimeout(restore, 500); };
     window.addEventListener('pageshow', update);
     window.addEventListener('resize', update);
-    return () => { clearTimeout(t); window.removeEventListener('pageshow', update); window.removeEventListener('resize', update); };
+    window.addEventListener('focusout', onFocusOut);
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', update);
+    vv?.addEventListener('scroll', update);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('pageshow', update);
+      window.removeEventListener('resize', update);
+      window.removeEventListener('focusout', onFocusOut);
+      vv?.removeEventListener('resize', update);
+      vv?.removeEventListener('scroll', update);
+    };
   }, []);
 
   const sysScheme=useColorScheme();
