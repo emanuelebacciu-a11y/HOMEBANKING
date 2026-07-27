@@ -434,38 +434,46 @@ function OverviewPage({C,data,txs}) {
         <MetricCard C={C} label="Saving Rate" value={fmt.pct(d.savingRate)} color={d.savingRate>0?C.cyan:C.orange} delay={2}/>
         <MetricCard C={C} label="Spesa/giorno" value={fmt.currency(d.avgDailySpend,cur)} color={C.orange} delay={3}/>
       </div>
-      {d.balHistory.length>1&&(
-        <Glass C={C}>
-          <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:12}}>Andamento Saldo</div>
-          <ResponsiveContainer width="100%" height={130}>
-            <AreaChart data={d.balHistory||[]} margin={{left:-20,right:0,top:4,bottom:0}}>
-              <defs><linearGradient id="balGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.cyan} stopOpacity={0.3}/><stop offset="95%" stopColor={C.cyan} stopOpacity={0}/></linearGradient></defs>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.sep} vertical={false}/>
-              <XAxis dataKey="date" tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} interval="preserveStartEnd"/>
-              <YAxis tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={v=>fmt.short(v)}/>
-              <Area type="monotone" dataKey="balance" stroke={C.cyan} strokeWidth={2} fill="url(#balGrad)" dot={false}/>
-            </AreaChart>
-          </ResponsiveContainer>
-        </Glass>
-      )}
-      {d.monthlyData.length>0&&(
-        <Glass C={C}>
-          <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px',marginBottom:12}}>Entrate vs Uscite Mensili</div>
-          <ResponsiveContainer width="100%" height={140}>
-            <BarChart data={(d.monthlyData||[]).slice(-12)} margin={{left:-20,right:0,top:4,bottom:0}}>
-              <CartesianGrid strokeDasharray="3 3" stroke={C.sep} vertical={false}/>
-              <XAxis dataKey="month" tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={fmt.monthLabel}/>
-              <YAxis tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={v=>fmt.short(v)}/>
-              <Bar dataKey="income" fill={C.green} radius={[3,3,0,0]} maxBarSize={18} opacity={0.85}/>
-              <Bar dataKey="expense" fill={C.red} radius={[3,3,0,0]} maxBarSize={18} opacity={0.85}/>
-            </BarChart>
-          </ResponsiveContainer>
-          <div style={{display:'flex',gap:16,marginTop:4}}>
-            <div style={{display:'flex',alignItems:'center',gap:5}}><div style={{width:8,height:8,borderRadius:2,background:C.green}}/><span style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono}}>Entrate</span></div>
-            <div style={{display:'flex',alignItems:'center',gap:5}}><div style={{width:8,height:8,borderRadius:2,background:C.red}}/><span style={{color:C.tertiary,fontSize:10,fontFamily:FONT.mono}}>Uscite</span></div>
-          </div>
-        </Glass>
-      )}
+      {d.balHistory.length>1&&(()=>{
+        // Equity / andamento saldo: linea del patrimonio nel tempo.
+        // In vista "Tutto" estendo fino a oggi così l'asse arriva alla data odierna.
+        // Etichette mese in formato MM/YY, spaziate e adattive alla larghezza.
+        const todayISO=(()=>{const t=new Date();const p=n=>String(n).padStart(2,'0');return `${t.getFullYear()}-${p(t.getMonth()+1)}-${p(t.getDate())}`;})();
+        let balData=d.balHistory;
+        if(period==='all'&&balData.length&&balData[balData.length-1].date<todayISO){
+          balData=[...balData,{date:todayISO,balance:balData[balData.length-1].balance}];
+        }
+        const monthTicks=(()=>{const s=new Set();const arr=[];for(const p of balData){const m=p.date.slice(0,7);if(!s.has(m)){s.add(m);arr.push(p.date);}}return arr;})();
+        const first=balData[0].balance, last=balData[balData.length-1].balance;
+        const eqColor=last>=first?C.green:C.red;
+        const delta=last-first;
+        const fmtTick=v=>{const a=String(v).split('-');return a.length>=2?`${a[1]}/${a[0].slice(2)}`:v;};
+        return (
+          <Glass C={C}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:12,gap:8}}>
+              <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px'}}>Andamento Saldo</div>
+              <div style={{display:'flex',alignItems:'center',gap:7}}>
+                <span style={{color:C.primary,fontSize:13,fontFamily:FONT.mono,fontWeight:700,fontVariantNumeric:'tabular-nums'}}>{fmt.currency(last,cur)}</span>
+                <span style={{color:eqColor,fontSize:11,fontFamily:FONT.mono,fontWeight:600}}>{delta>=0?'+':''}{fmt.currency(delta,cur)}</span>
+              </div>
+            </div>
+            <ResponsiveContainer width="100%" height={172}>
+              <AreaChart data={balData} margin={{left:-14,right:10,top:6,bottom:0}}>
+                <defs>
+                  <linearGradient id="balGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={eqColor} stopOpacity={0.3}/>
+                    <stop offset="100%" stopColor={eqColor} stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="2 5" stroke={C.sep} vertical={false}/>
+                <XAxis dataKey="date" ticks={monthTicks} tickFormatter={fmtTick} tick={{fill:C.tertiary,fontSize:10,fontFamily:FONT.mono}} tickLine={false} axisLine={false} minTickGap={26} tickMargin={8} padding={{left:8,right:8}}/>
+                <YAxis tick={{fill:C.tertiary,fontSize:9,fontFamily:FONT.mono}} tickLine={false} axisLine={false} tickFormatter={v=>fmt.short(v)} width={42}/>
+                <Area type="monotone" dataKey="balance" stroke={eqColor} strokeWidth={2.5} fill="url(#balGrad)" dot={false} activeDot={{r:3.5,fill:eqColor,stroke:C.bg,strokeWidth:1.5}}/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </Glass>
+        );
+      })()}
       <Glass C={C}>
         {(()=>{
           const rows=[{label:'Transazioni totali',val:d.totalTxs.toString()}];
