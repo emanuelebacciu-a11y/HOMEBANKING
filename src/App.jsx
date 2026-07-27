@@ -446,16 +446,12 @@ function OverviewPage({C,data,txs}) {
         const monthTicks=(()=>{const s=new Set();const arr=[];for(const p of balData){const m=p.date.slice(0,7);if(!s.has(m)){s.add(m);arr.push(p.date);}}return arr;})();
         const first=balData[0].balance, last=balData[balData.length-1].balance;
         const eqColor=last>=first?C.green:C.red;
-        const delta=last-first;
         const fmtTick=v=>{const a=String(v).split('-');return a.length>=2?`${a[1]}/${a[0].slice(2)}`:v;};
         return (
           <Glass C={C}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:12,gap:8}}>
               <div style={{color:C.secondary,fontSize:11,fontFamily:FONT.text,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.4px'}}>Andamento Saldo</div>
-              <div style={{display:'flex',alignItems:'center',gap:7}}>
-                <span style={{color:C.primary,fontSize:13,fontFamily:FONT.mono,fontWeight:700,fontVariantNumeric:'tabular-nums'}}>{fmt.currency(last,cur)}</span>
-                <span style={{color:eqColor,fontSize:11,fontFamily:FONT.mono,fontWeight:600}}>{delta>=0?'+':''}{fmt.currency(delta,cur)}</span>
-              </div>
+              <span style={{color:C.primary,fontSize:13,fontFamily:FONT.mono,fontWeight:700,fontVariantNumeric:'tabular-nums'}}>{fmt.currency(last,cur)}</span>
             </div>
             <ResponsiveContainer width="100%" height={172}>
               <AreaChart data={balData} margin={{left:-14,right:10,top:6,bottom:0}}>
